@@ -1,0 +1,492 @@
+---
+title: "Linear Models"
+format: pdf
+editor: source
+---
+
+\renewcommand{\vec}[1]{\mathbf{#1}}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 4, fig.width = 6)
+library(tidyverse) 
+library(gridExtra)
+library(arm)
+library(rstanarm)
+library(knitr)
+```
+
+
+### Previous Section's Recap
+
+- Spatial data visualization
+- Point pattern data: # of points and locations are random
+- Parametric modeling of surface intensity
+
+### This Week's Key Concepts
+
+- Linear Algebra 
+- Linear Model Overview
+- Simulating Data in R
+- Fitting Linear Models in R
+- Bayesian Inference
+- Fitting Bayesian Models with Stan
+
+---
+
+
+### Matrices / Vectors
+
+A matrix is an $n \times p$ object. Matrices are often denoted by a capital letter (or Greek symbol). A few common matrices will be
+
+$$X = \begin{pmatrix}
+1 & x_{11} & x_{12}\\
+1 & x_{21} & x_{22}\\
+\vdots & \vdots & \vdots \\
+1 & x_{n1} & x_{n2}
+\end{pmatrix}$$
+
+or
+
+$$\Sigma = \begin{pmatrix}
+\sigma^2_1 & \sigma_{12} & \cdots &\sigma_{1n}\\
+\sigma_{21} & \sigma^2_{2} & \cdots &\sigma_{2n}\\
+\vdots & \vdots & \ddots &\vdots\\
+\sigma_{n1} & \sigma_{n2} & \ddots &\sigma^2_{n}\\
+\end{pmatrix}$$
+
+\vfill
+
+Vectors are essentially one-dimension vectors and will be denoted with an underline. We will assume vectors are $q \times 1$ dimension unless noted with a transpose.
+
+$$\underline{y} = \begin{pmatrix}
+  y_1 \\
+  y_2 \\
+  \vdots\\
+  y_n \end{pmatrix}$$
+or
+
+$$\underline{\beta} = \begin{pmatrix}
+  \beta_0 \\
+  \beta_1 \\
+  \vdots\\
+  \beta_{p-1} \end{pmatrix}$$
+
+\vfill
+
+The transpose operator will be denoted by $\underline{y}^T = \begin{pmatrix} y_1 & y_2 & \cdots & y_n \end{pmatrix}$ or $\underline{y}^{'}$, both of which would result in a $1 \times n$ vector.
+
+\newpage
+
+##### Matrix Multiplication
+
+The most important component in matrix multiplication is tracking dimensions.
+
+\vfill
+
+Consider a simple case with 
+
+$$\hat{\underline{y}} = X \times \hat{\underline{\beta}},$$
+
+where $X$ is a $2 \times 2$ matrix, $\begin{pmatrix} 1 & 2 \\ 1 & -1   \end{pmatrix}$ and $\hat{\underline{\beta}} = \begin{pmatrix} 3 \\ 2 \end{pmatrix}$.
+
+\vfill
+
+Then $$\hat{\underline{y}}= \begin{bmatrix}
+1 \times 3 + 2 \times 2 \\
+1 \times 3 + (-1)\times 2 \\
+\end{bmatrix} = 
+\begin{bmatrix}
+7 \\
+-1 \\
+\end{bmatrix}$$
+
+In R, we use `%*%` for matrix multiplication.
+
+```{r}
+X <- matrix(c(1,2, 1 ,-1), nrow = 2, ncol = 2, byrow = T); X
+#X <- matrix(c(1, 1, 2 ,-1), nrow = 2, ncol = 2); X
+beta_hat <- matrix(c(3,2),nrow =2, ncol = 1); beta_hat
+```
+
+\vfill
+
+```{r}
+y_hat <- X %*% beta_hat; y_hat
+```
+
+\vfill
+
+
+
+### Linear Model Specification
+
+Linear models provide the foundation for most statistical analyses: 
+
+- _regression models(matrix notation): $y = X\beta + \epsilon$, where $\epsilon \sim N(0,\Sigma)$ and $\Sigma = \sigma^2 I$_
+
+
+One assumption, that is often violated in spatial statistics is that the errors are independently distributed.
+
+
+### Simulating Data in R
+
+Simulating "fake" data will be a cornerstone of fitting models in this class.
+
+```{r}
+set.seed(01112021)
+# initialize parameters
+num_obs <- 100
+beta <- 1
+sigma <- 2
+
+# simulate data
+x <- runif(num_obs, min = -10, max = 10)
+y <- x * beta + rnorm(num_obs, mean = 0, sd = sigma)
+```
+
+\vfill
+
+```{r, fig.cap = "Scatterplot of synthetic data with best fit regression line."}
+# create figure
+tibble(x=x, y=y) %>%
+  ggplot(aes(x=x, y=y)) +
+  geom_point() + 
+  theme_bw() + 
+  geom_smooth(formula = 'y~x', method = 'lm')
+```
+
+\newpage
+
+### Fitting Linear Models in R
+
+The standard method for fitting linear models in R is with `lm()`.
+
+```{r}
+fit_lm <- lm(y ~ x)
+summary(fit_lm)
+```
+
+
+A Bayesian alternative framework for fitting regression models is to use the `rstanarm` package and the associated `stan_glm()` functionality.
+
+
+```{r}
+synthetic_data <- tibble(x = x, y = y)
+fit_stan <- stan_glm(y ~ x, data = synthetic_data, refresh = 0)
+print(fit_stan)
+```
+
+
+### Bayesian Inference
+
+_`stan_glm()` is a Bayesian procedure that uses Markov Chain Monte Carlo to generate samples that represent distribution for each parameter._
+
+\vfill
+
+While there are coefficient estimates similar to `lm`
+
+```{r}
+coef(fit_stan)
+```
+
+\vfill
+
+Rather than just a point estimate that maximizes the likelihood, the object actually contains a set of samples for each of the parameter values.
+
+```{r}
+fit_stan %>% as.data.frame() %>% head(10)
+```
+\vfill
+
+_While the estimation procedure and interval interpretations are fundamentally different, the actual values on the interval are fairly similar._
+
+\vfill
+
+```{r}
+posterior_interval(fit_stan, prob = .95)
+confint(fit_lm)
+```
+
+
+So what is hiding in this model specification? __priors, of course__
+
+
+```{r}
+synthetic_data <- tibble(x = x, y = y)
+fit_stan <- stan_glm(y ~ x, data = synthetic_data, refresh = 0)
+```
+
+
+
+```{r}
+prior_summary(fit_stan)
+```
+
+\newpage
+
+
+\vfill
+
+
+
+*With Bayesian inference, Markov Chain Monte Carlo (MCMC) is used to compute the posterior distribution. The `stan_glm()` functions call STAN to implement MCMC behind the curtain to find posterior distributions of parameters. MCMC can be written in any language, but STAN has some nice advantages (Hamiltonian Monte Carlo).*
+
+
+
+##### Motivating Dataset: Washington (DC) housing dataset
+
+Hopefully the connections to statistics are clear, using $X$ and $\beta$, but let's consider a motivating dataset.
+
+\vfill
+This dataset contains housing information from Washington, D.C. 
+
+```{r}
+DC <- read_csv('https://math.montana.edu/ahoegh/teaching/stat532/data/DC.csv')
+```
+
+
+```{r}
+DC %>% group_by(WARD) %>% 
+  summarize(`Average Price (millions of dollars)` = mean(PRICE)/1000000, .groups = 'drop') %>% 
+  kable(digits = 3)
+
+DC %>% group_by(BEDRM) %>% 
+  summarize(`Average Price (millions of dollars)` = mean(PRICE)/1000000, .groups = 'drop') %>% 
+  kable(digits = 3)
+```
+
+\vfill
+
+\newpage
+
+\vfill
+
+### Regression Model
+
+There are many factors in this dataset that can are useful to predict housing prices.
+
+\vfill
+\begin{equation}
+y_i = \beta_0 + \beta_1 * x_{SQFT,i} + \beta_2 x_{BEDRM,i} + \epsilon_i,
+\end{equation}
+where $y_i$ is the sales price of the $i^{th}$ house, $x_{SQFT,i}$ is the living square footage of the $i^{th}$ house, and $x_{BEDRM,i}$ is the number of bedrooms for the $i^{th}$ house. Note this implies that we are treating bedrooms as continuous variables as opposed to categorical.
+
+\vfill
+
+we usually write $\epsilon_i \sim N(0,\sigma^2)$. More on that soon.
+
+\vfill
+
+In R we often write something like: `price ~  LANDUSE + BEDRM`.
+
+\vfill
+
+Now let's write this model in matrix notation:
+
+\begin{equation}
+\underline{y} = X \underline{\beta} + \underline{\epsilon},
+\end{equation}
+
+where $\underline{y} = \begin{bmatrix} y_1 \\ y_2 \\ \vdots \\ y_n \end{bmatrix}$, $X = \begin{bmatrix} 1 & x_{SQFT,1} & x_{BEDRM,1}\\
+1 & x_{SQFT,2} & x_{BEDRM,2} \\ 
+\vdots & \vdots & \vdots \\
+1 & x_{SQFT,n} & x_{BEDRM,n}
+\end{bmatrix}$ ,$\underline{\beta} = \begin{bmatrix} \beta_0 \\ \beta_1 \\ \beta_2 \end{bmatrix}$, and $\underline{\epsilon} = \begin{bmatrix} \epsilon_1 \\ \epsilon_2 \\ \vdots \\ \epsilon_n \end{bmatrix}$
+
+\vfill
+
+Now what are the implications of:
+
+$\epsilon_i \sim N(0,\sigma^2)$ or $\underline{\epsilon} \sim N(\underline{0}, \Sigma)$, where $$\Sigma = \sigma \times \begin{bmatrix} 1 & 0 & \cdots & 0\\
+0 & 1 & \cdots & 0\\
+\vdots & \vdots &\ddots  & \vdots\\
+0 & 0 & \cdots & 1\\
+\end{bmatrix}$$
+
+\vfill
+
+These are equivalent statements and both imply that $y_i$ and $y_j$ are conditionally independent given X. In other words, after controlling for predictors (ward, square footage), then the price of house $i$ gives us no additional information about price of house $j$.  
+
+
+\newpage
+
+###### Diagonal Matrices 
+The matrix we previously specified, is referred to as a diagonal matrix. This is often denoted with 
+$$I_n = \begin{bmatrix} 1 & 0 & \cdots & 0\\
+0 & 1 & \cdots & 0\\
+\vdots & \vdots &\ddots  & \vdots\\
+0 & 0 & \cdots & 1\\
+\end{bmatrix},$$ where $n$ is the dimension. Note this is also just shortened to $I$.
+
+\vfill
+
+
+##### Correlation Matrices
+
+It turns out that $I$ is the special case of what is referred to as a correlation matrix.
+
+\vfill
+
+A correlation matrix is:
+
+- is symmetric
+
+\vfill
+
+- contains ones on the diagonal
+
+\vfill
+
+- contains correlation terms on the off diagonal
+
+\vfill
+
+- is positive definite (more later)
+
+\vfill
+
+Similarly $\Sigma$ is often referred to as a variance - covariance matrix (or just a covariance matrix). A covariance matrix:
+
+- is symmetric
+
+\vfill
+
+- contains variance terms on the diagonal
+
+\vfill
+
+- contains covariance terms on the off diagonal
+
+\vfill
+
+- is positive definite (more later)
+
+\vfill
+
+$$\Sigma = \begin{pmatrix}
+\sigma^2_1 & \sigma_{12} & \cdots &\sigma_{1n}\\
+\sigma_{21} & \sigma^2_{2} & \cdots &\sigma_{2n}\\
+\vdots & \vdots & \ddots &\vdots\\
+\sigma_{n1} & \sigma_{n2} & \ddots &\sigma^2_{n}\\
+\end{pmatrix}$$
+
+\newpage
+
+##### Multivariate Normal Distribution
+
+Formally, our matrix notation has used a multivariate normal distribution.
+
+\begin{equation}
+\underline{y} = X \underline{\beta} + \underline{\epsilon},
+\end{equation}
+
+where $\underline{\epsilon} \sim N(\underline{0}, \Sigma),$ which also implies $\underline{y} \sim N(X \underline{\beta}, \Sigma)$.
+
+\vfill
+
+###### Partitioned Matrices
+
+Now consider splitting the sampling units into two partitions such that $\underline{y} = \begin{bmatrix} \underline{y}_1 \\ \underline{y}_2 \end{bmatrix}$. Then,
+
+\vfill
+
+$$\begin{bmatrix}\underline{y}_1 \\ \underline{y}_2 \end{bmatrix} \sim N \left( \begin{bmatrix}X_1 \\ X_2 \end{bmatrix} \underline{\beta}  ,
+\begin{bmatrix} \Sigma_{11} & \Sigma_{12} \\ \Sigma_{12} & \Sigma_{22} \end{bmatrix}\right)$$
+
+\vfill
+
+Fundamentally, there is no change to the model, we have just created "groups" by partitioning the model. Do note that $\Sigma_{11}$ is an $n_1 \times n_1$ covariance matrix.
+
+$$\Sigma_{11} = \begin{bmatrix}
+\sigma^2_1 & \sigma_{12} & \cdots &\sigma_{1n_1} \\
+\sigma_{22} & \sigma^2_2 &   \cdots &\sigma_{2n_1} \\
+\sigma_{31} & \sigma_{32} &   \ddots &\sigma_{3n_1} \\
+\vdots & \vdots &   \ddots &\vdots \\
+\sigma_{n_1 1} & \sigma_{n_1 2} &   \ddots &\sigma^2_{n_1} 
+\end{bmatrix}$$
+
+\vfill
+
+However, while $\Sigma_{12} = \Sigma_{21}^T$, neither of these are necessarily symmetric matrices. They also do not have any variance components, but rather just covariance terms. $\Sigma_{12}$ will be an $n_1 \times n_2$ matrix.
+
+$$\Sigma_{11} = \begin{bmatrix}
+\sigma_{1,n_1 +1} & \sigma_{1,n_1 + 2} & \cdots &\sigma_{1,n_1 + n_2} \\
+\sigma_{2, n_1 + 1} & \sigma_{2, n1 + 2} &   \cdots &\sigma_{2,n_1 + n_2} \\
+\vdots & \vdots &   \ddots &\vdots \\
+\sigma_{n_1, n_1 + 1} & \sigma_{n_1, n_1 + 2} &   \ddots &\sigma_{n_1, n_1 + n_2} 
+\end{bmatrix}$$
+
+\newpage
+
+### Conditional Multivariate Normal
+
+Here is where the magic happens with correlated data. Let $\underline{y_1}|\underline{Y_2}=\underline{y_2}$ be a conditional distribution for $\underline{y_1}$ given that $\underline{y_2}$ is known. Then
+
+\vfill
+
+$$\underline{y_1}|\underline{y_2} \sim N \left( X_1\beta + \Sigma_{12} \Sigma_{22}^{-1}\left(\underline{y_2} - X_2\beta \right), \Sigma_{11} - \Sigma_{12} \Sigma_{22}^{-1} \Sigma_{21} \right)$$
+\vfill
+
+Now let's consider a few special cases (in the context of the DC housing dataset.)
+
+\vfill
+
+1. Let $\Sigma = \sigma^2 I$, then the batch of houses in group 1 are conditionally dependent from the houses in group 2 and 
+
+$$\underline{y_1}|\underline{y_2}  \sim N \left( X_1\beta, \Sigma_{11} \right)$$
+\vfill
+
+2. Otherwise, let $\Sigma = \sigma^2 H$ and we'll assume $\Sigma_{12}$ has some non-zero elements. Then we have a more precise estimate of $\underline{y_1}$ as $\Sigma_{11} - \Sigma_{12} \Sigma_{22}^{-1} \Sigma_{21}$ will be "less than" $\Sigma_{11}$ (that positive definite thing). Furthermore, the mean will shift such that highly correlated observations such as houses in close proximity (local model structure) will tend to differ from the global mean in the same fashion.
+
+\vfill
+
+First a quick interlude about matrix inversion. The inverse of a symmetric matrix is defined such that $E \times E^{-1} = I$. We can calculate the inverse of a matrix for a $1 \times 1$ matrix, perhaps as $2 \times 2$, matrix and maybe even a $3 \times 3$ matrix. However, beyond that it is quite challenging and time consuming. Furthermore, it is also (relatively) time intensive for your computer.
+
+\vfill
+
+\newpage
+
+3. Let $n_1 = 1$ and $n_2 = 1$, then
+
+$$\begin{bmatrix}y_1 \\ y_2 \end{bmatrix} \sim N \left( \begin{bmatrix}\mu_1 \\ \mu_2 \end{bmatrix}   ,
+\begin{bmatrix} \sigma^2_{1} & \sigma_{12} \\ \sigma_{12} & \sigma_{2}^2 \end{bmatrix}\right)$$
+
+and
+
+$$y_1|y_2 \sim N \left( \mu_1 + \sigma_{12} (\sigma_{2}^{2})^{-1}\left(y_2 - \mu_2 \right), \sigma_{1}^2 - \sigma_{12} (\sigma_{2}^{2})^{-1} \sigma_{21} \right)$$
+\vfill
+
+Now consider an illustration for a couple simple scenarios. Let $\mu_1 = \mu_2 = 0$ and $\sigma^2_1 = \sigma^2_2 = 1$. Now assume $y_2 = -2$ and we compare the conditional distribution for a few values of $\sigma_{12}$.
+\vfill
+
+```{r, echo = F}
+mu1 <- 0
+mu2 <- 0
+sigmasq1 <- sigmasq2 <- 1
+
+dat_seq <- seq(-4,4, by = .01)
+n_seq <- length(dat_seq)
+tibble(group = rep(c('y2 = -2; sigma12 = 0',
+                     'y2 = -2; sigma12 = .2',
+                     'y2 = -2; sigma12 = .8'), each = n_seq), 
+dens = c(dnorm(dat_seq, mu1 + 0*(1/sigmasq2)*(-2 - mu2),
+               sqrt(sigmasq1 - 0 * (1/sigmasq2)*0 )), 
+         dnorm(dat_seq, mu1 + .2*(1/sigmasq2)*(-2 - mu2),
+               sqrt(sigmasq1 - .2 * (1/sigmasq2)*2 )), 
+         dnorm(dat_seq, mu1 + .8*(1/sigmasq2)*(-2 - mu2),
+               sqrt(sigmasq1 - .8 * (1/sigmasq2)*.8 ))), 
+y = rep(dat_seq, 3)) %>% 
+  ggplot(aes(x=y, y = dens, group = group, color = group)) +
+  geom_line() + theme_bw()
+```
+
+
+\vfill
+
+One last note, the marginal distributions for any partition $\underline{y_1}$ are quite simple.
+
+$$\underline{y_1} \sim N \left( X_1\beta, \Sigma_{11} \right)$$
+or just
+
+$$y_1 \sim N \left( X_1\beta, \sigma^2_{1} \right)$$
+if $y_1$ is scalar.
