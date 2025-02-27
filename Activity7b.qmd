@@ -1,0 +1,265 @@
+---
+title: "Week 7: Activity 2"
+format: pdf
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+\renewcommand{\vec}[1]{\mathbf{#1}}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 4, fig.width = 6)
+library(tidyverse) 
+library(knitr)
+library(mnormt)
+library(plgp)
+library(reshape2)
+
+```
+
+
+### Tuesday's Recap
+
+- Linear Algebra 
+- Linear Model Overview
+- Simulating Data in R
+- Fitting Linear Models in R
+- Bayesian Inference
+
+### Today's Key Concepts
+
+- Multivariate Normal distribution
+- Conditional Multivariate normal distribution
+- Gaussian Process Intro
+
+---
+
+##### Multivariate Normal Distribution
+
+Formally, our matrix notation has used a multivariate normal distribution.
+
+\begin{equation}
+\underline{y} = X \underline{\beta} + \underline{\epsilon},
+\end{equation}
+
+where $\underline{\epsilon} \sim N(\underline{0}, \Sigma),$ which also implies $\underline{y} \sim N(X \underline{\beta}, \Sigma)$.
+
+\vfill
+
+Simulate data from a multivariate normal distribution. Use the x sequence created below and define $\Sigma_{ij} = \exp(- d_{ij})$ where $\Sigma_{ij}$ is the $i^{th}$ row and $j^{th}$ column of $\Sigma$ and $d_{ij}$ is the distance between the $i^{th}$ and $j^{th}$ points.
+
+```{r}
+x <- seq(0, 10, by = .1)
+```
+
+
+##### Partitioned Matrices
+
+Now consider splitting the sampling units into two partitions such that $\underline{y} = \begin{bmatrix} \underline{y}_1 \\ \underline{y}_2 \end{bmatrix}$. Then,
+
+\vfill
+
+$$\begin{bmatrix}\underline{y}_1 \\ \underline{y}_2 \end{bmatrix} \sim N \left( \begin{bmatrix}X_1 \\ X_2 \end{bmatrix} \underline{\beta}  ,
+\begin{bmatrix} \Sigma_{11} & \Sigma_{12} \\ \Sigma_{12} & \Sigma_{22} \end{bmatrix}\right)$$
+
+\vfill
+
+Fundamentally, there is no change to the model, we have just created "groups" by partitioning the model. Do note that $\Sigma_{11}$ is an $n_1 \times n_1$ covariance matrix.
+
+$$\Sigma_{11} = \begin{bmatrix}
+\sigma^2_1 & \sigma_{12} & \cdots &\sigma_{1n_1} \\
+\sigma_{22} & \sigma^2_2 &   \cdots &\sigma_{2n_1} \\
+\sigma_{31} & \sigma_{32} &   \ddots &\sigma_{3n_1} \\
+\vdots & \vdots &   \ddots &\vdots \\
+\sigma_{n_1 1} & \sigma_{n_1 2} &   \ddots &\sigma^2_{n_1} 
+\end{bmatrix}$$
+
+\vfill
+
+However, while $\Sigma_{12} = \Sigma_{21}^T$, neither of these are necessarily symmetric matrices. They also do not have any variance components, but rather just covariance terms. $\Sigma_{12}$ will be an $n_1 \times n_2$ matrix.
+
+$$\Sigma_{11} = \begin{bmatrix}
+\sigma_{1,n_1 +1} & \sigma_{1,n_1 + 2} & \cdots &\sigma_{1,n_1 + n_2} \\
+\sigma_{2, n_1 + 1} & \sigma_{2, n1 + 2} &   \cdots &\sigma_{2,n_1 + n_2} \\
+\vdots & \vdots &   \ddots &\vdots \\
+\sigma_{n_1, n_1 + 1} & \sigma_{n_1, n_1 + 2} &   \ddots &\sigma_{n_1, n_1 + n_2} 
+\end{bmatrix}$$
+
+\newpage
+
+### Conditional Multivariate Normal
+
+Here is where the magic happens with correlated data. Let $\underline{y_1}|\underline{Y_2}=\underline{y_2}$ be a conditional distribution for $\underline{y_1}$ given that $\underline{y_2}$ is known. Then
+
+\vfill
+
+$$\underline{y_1}|\underline{y_2} \sim N \left( X_1\beta + \Sigma_{12} \Sigma_{22}^{-1}\left(\underline{y_2} - X_2\beta \right), \Sigma_{11} - \Sigma_{12} \Sigma_{22}^{-1} \Sigma_{21} \right)$$
+\vfill
+
+Now let's consider a few special cases (in the context of the DC housing dataset.) What is $\underline{y_1}|\underline{y_2}  \sim$
+
+\vfill
+
+1. Let $\Sigma = \sigma^2 I$, then the batch of houses in group 1 are conditionally dependent from the houses in group 2 
+
+\vfill
+
+2. Otherwise, let $\Sigma = \sigma^2 H$ and we'll assume $\Sigma_{12}$ has some non-zero elements. 
+\vfill
+
+First a quick interlude about matrix inversion. The inverse of a symmetric matrix is defined such that $E \times E^{-1} = I$. We can calculate the inverse of a matrix for a $1 \times 1$ matrix, perhaps as $2 \times 2$, matrix and maybe even a $3 \times 3$ matrix. However, beyond that it is quite challenging and time consuming. Furthermore, it is also (relatively) time intensive for your computer.
+
+\vfill
+
+\newpage
+
+#### Visual Example
+
+Let $n_1 = 1$ and $n_2 = 1$, then
+
+$$\begin{bmatrix}y_1 \\ y_2 \end{bmatrix} \sim N \left( \begin{bmatrix}\mu_1 \\ \mu_2 \end{bmatrix}   ,
+\begin{bmatrix} \sigma^2_{1} & \sigma_{12} \\ \sigma_{12} & \sigma_{2}^2 \end{bmatrix}\right)$$
+
+and
+
+$$y_1|y_2 \sim N \left( \mu_1 + \sigma_{12} (\sigma_{2}^{2})^{-1}\left(y_2 - \mu_2 \right), \sigma_{1}^2 - \sigma_{12} (\sigma_{2}^{2})^{-1} \sigma_{21} \right)$$
+\vfill
+
+Now consider an illustration for a couple simple scenarios. Let $\mu_1 = \mu_2 = 0$ and $\sigma^2_1 = \sigma^2_2 = 1$. Now assume $y_2 = -2$ and we compare the conditional distribution for a few values of $\sigma_{12}$ = {0, .2, .8}. Plot these three distributions on the same figure.
+
+
+
+\vfill
+
+#### Marginal Distributions
+
+One last note, the marginal distributions for any partition $\underline{y_1}$ are quite simple.
+
+$$\underline{y_1} \sim N \left( X_1\beta, \Sigma_{11} \right)$$
+or just
+
+$$y_1 \sim N \left( X_1\beta, \sigma^2_{1} \right)$$
+if $y_1$ is scalar.
+
+
+#### GP Overview
+
+Now let's extend this idea to a Gaussian Process (GP). There are two fundamental ideas to a GP.
+
+\vfill
+
+1. Any finite set of realizations (say $\underline{y_2}$) has a multivariate normal distribution.
+
+\vfill
+
+2. Conditional on a set of realizations, all other locations (say $\underline{y_1}$) have a conditional normal distribution characterized by the mean, and most importantly the covariance function. Note the dimension of $\underline{y_1}$ can actually be infinite, such as defined on the real line.
+
+\vfill
+
+The big question is how to we estimate $\Sigma_{12}$?
+
+\vfill
+
+
+\vfill
+
+Fundamental idea of spatial statistics is that things close together tend to be similar.
+
+
+#### Correlation function
+
+Initially, let's consider correlation as a function of distance, in one dimension or on a line.
+
+\vfill
+
+As a starting point, consider a variant of what is known as the exponential covariance function - we used this earlier. First define $d$ as the Euclidean distance between $x_1$ and $x_2$, such that $d = \sqrt{(x_i - x_j)^2}$ 
+
+$$\rho_{i,j} = \exp \left(- d \right)$$
+
+\vfill
+
+Lets view the exponential correlation as a function of distance between the two points.
+
+```{r, echo = F}
+dist <- seq(0, 10, by = .1)
+
+tibble(rho = exp(-dist), dist = dist) %>%
+  ggplot(aes(y = rho, x = dist)) + geom_line() +
+  theme_bw() + ylab(expression(rho))
+
+```
+
+\vfill
+
+Using a correlation function can reduce the number of unknown parameters in a covariance matrix. In an unrestricted case, $\Sigma$ has $n \choose 2$ + $n$ unknown parameters. However, using a correlation function can reduce the number of unknown parameters substantially, generally less than 4.
+
+\newpage
+
+#### Realizations of a Gaussian Process
+
+Recall that a process implies an infinite dimensional object. So we can generate a line rather than a discrete set of points. (While in practice the line will in fact be generated with a discrete set of points and then connected.)
+
+\vfill
+
+For this scenario we will assume a zero-mean GP, with covariance equal to the correlation function using $\rho_{i,j} = \exp \left(- d \right)$
+
+Simulate and visualize a realization from this process.
+
+
+
+\vfill
+
+
+
+#### Connecting a GP to conditional normal
+
+Now consider a discrete set of points, say $\underline{y_2}$, how can we estimate the response for the remainder of the values in the interval [0,1].
+
+```{r, echo = F}
+x2 <- seq(0, 10, by = .75)
+n <- length(x2)
+d2 <- as.matrix(dist(x2, diag = T, upper = T))
+Sigma22 <- exp(-d2) 
+y2 <- rmnorm(1, rep(0,n),Sigma22)
+data_fig <- tibble(y = y2, x = x2) %>% ggplot(aes(y=y, x=x)) +
+  #geom_line() + 
+  theme_bw() + ggtitle('Observed Data') +
+  geom_point(size = .5)
+data_fig
+```
+
+\newpage
+
+We can connect the dots (with uncertainty) using:
+
+$$\underline{y_1}|\underline{y_2} \sim N \left( X_1\beta + \Sigma_{12} \Sigma_{22}^{-1}\left(\underline{y_2} - X_2\beta \right), \Sigma_{11} - \Sigma_{12} \Sigma_{22}^{-1} \Sigma_{21} \right)$$
+\vfill
+
+Plot the conditional mean curve on the observed data.
+
+\vfill
+
+
+### GP Regression
+
+Now rather than specifying a zero-mean GP, let the mean be $X \underline{\beta}.$
+
+\vfill
+
+```{r}
+x <- seq(0, 10, by = .25)
+beta <- 1
+n <- length(x)
+d <- sqrt(plgp::distance(x))
+H <- exp(-d)
+y <- rmnorm(1, x * beta ,H)
+```
+
+```{r, echo = F, fig.width = 8, fig.height = 4}
+tibble(y = y, x = x) %>% ggplot(aes(y=y, x=x)) +
+ theme_bw() + ggtitle('Random realization of a GP Regression') +
+  geom_point(size = .5) + geom_smooth(formula = 'y~x', method = 'lm')
+```
+
+\
