@@ -1,0 +1,479 @@
+---
+title: "Week 8: Activity Key"
+format: pdf
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 6, fig.width = 6)
+library(tidyverse) 
+library(knitr)
+library(mnormt)
+library(plgp)
+library(reshape2)
+
+```
+
+
+### Last Week's Recap
+
+- Exam 1
+
+- Linear Algebra 
+- Linear Model Overview
+- Simulating Data in R
+- Fitting Linear Models in R
+- Multivariate Normal distribution
+- Partitioned Matrices and Conditional Multivariate normal distribution
+
+### Video Lectures
+
+- `rstan` in R for Bayesian inference
+
+### This week
+
+- Gaussian Process Intro
+- Bayesian inference with `stan`
+- Correlation functions
+
+---
+
+
+#### Visual Example
+
+Let $n_1 = 1$ and $n_2 = 1$, then
+
+$$\begin{bmatrix}y_1 \\ y_2 \end{bmatrix} \sim N \left( \begin{bmatrix}\mu_1 \\ \mu_2 \end{bmatrix}   ,
+\begin{bmatrix} \sigma^2_{1} & \sigma_{12} \\ \sigma_{12} & \sigma_{2}^2 \end{bmatrix}\right)$$
+
+and
+
+$$y_1|y_2 \sim N \left( \mu_1 + \sigma_{12} (\sigma_{2}^{2})^{-1}\left(y_2 - \mu_2 \right), \sigma_{1}^2 - \sigma_{12} (\sigma_{2}^{2})^{-1} \sigma_{21} \right)$$
+\vfill
+
+```{r, echo = F}
+#| fig-height: 4
+
+mu1 <- 0
+mu2 <- 0
+sigmasq1 <- sigmasq2 <- 1
+
+dat_seq <- seq(-4,4, by = .01)
+n_seq <- length(dat_seq)
+tibble(group = rep(c('y2 = -2; sigma12 = 0',
+                     'y2 = -2; sigma12 = .2',
+                     'y2 = -2; sigma12 = .8'), each = n_seq), 
+dens = c(dnorm(dat_seq, mu1 + 0*(1/sigmasq2)*(-2 - mu2),
+               sqrt(sigmasq1 - 0 * (1/sigmasq2)*0 )), 
+         dnorm(dat_seq, mu1 + .2*(1/sigmasq2)*(-2 - mu2),
+               sqrt(sigmasq1 - .2 * (1/sigmasq2)*.2 )), 
+         dnorm(dat_seq, mu1 + .8*(1/sigmasq2)*(-2 - mu2),
+               sqrt(sigmasq1 - .8 * (1/sigmasq2)*.8 ))), 
+y = rep(dat_seq, 3)) %>% 
+  ggplot(aes(x=y, y = dens, group = group, color = group)) +
+  geom_line() + theme_bw()
+```
+
+\vfill
+
+__Q:__ Calculate and write out the actual distributions for $y_1$ in these three settings.
+
+1. $\sigma_{12} = 0 \rightarrow y_1|y_2 \sim N(0, 1^2)$
+2. $\sigma_{12} = .2 \rightarrow y_1|y_2 \sim N(-.4, .96^2)$
+3. $\sigma_{12} = .8 \rightarrow y_1|y_2 \sim N(-1.6, .36^2)$
+
+
+\vfill
+
+One last note, the marginal distributions for any partition $\underline{y_1}$ are quite simple.
+
+$$\underline{y_1} \sim N \left( X_1\beta, \Sigma_{11} \right)$$
+or just
+
+$$y_1 \sim N \left( X_1\beta, \sigma^2_{1} \right)$$
+if $y_1$ is scalar.
+
+
+#### GP Overview
+
+Now let's extend this idea to a Gaussian Process (GP). There are two fundamental ideas to a GP.
+
+\vfill
+
+1. Any finite set of realizations (say $\underline{y_2}$) has a multivariate normal distribution.
+
+\vfill
+
+2. Conditional on a set of realizations, all other locations (say $\underline{y_1}$) have a conditional normal distribution characterized by the mean, and most importantly the covariance function. Note the dimension of $\underline{y_1}$ can actually be infinite, such as defined on the real line.
+
+\vfill
+
+The big question is how to we estimate $\Sigma_{12}$? How many parameters are necessary for this distribution?
+
+\vfill
+
+*Generally, $\Sigma_{12}$, or more specifically the individual elements of $\Sigma_{12}$, such as $\sigma{i,j}$ will be estimated using some idea of distance.*
+
+\vfill
+
+Fundamental idea of spatial statistics is that things close together tend to be similar.
+
+
+#### Correlation function
+
+Initially, let's consider correlation as a function of distance, in one dimension or on a line.
+
+
+As a starting point, consider a variant of what is known as the exponential covariance function - we used this earlier. First define $d$ as the Euclidean distance between $x_1$ and $x_2$, such that $d = \sqrt{(x_i - x_j)^2}$ 
+
+$$\rho_{i,j} = \exp \left(- d \right)$$
+
+\vfill
+
+Create a figure that shows the exponential correlation as a function of distance between the two points.
+
+```{r, echo = F}
+
+x <- seq(0, 10, by = .1)
+
+dist <- seq(0, 10, by = .1)
+
+tibble(rho = exp(-dist), dist = dist) %>%
+  ggplot(aes(y = rho, x = dist)) + geom_line() +
+  theme_bw() + ylab(expression(rho))
+
+```
+
+\vfill
+
+Using a correlation function can reduce the number of unknown parameters in a covariance matrix. In an unrestricted case, $\Sigma$ has $n \choose 2$ + $n$ unknown parameters. However, using a correlation function can reduce the number of unknown parameters substantially, generally less than 4.
+
+\newpage
+
+#### Realizations of a Gaussian Process
+
+Recall that a process implies an infinite dimensional object. So we can generate a line rather than a discrete set of points. (While in practice the line will in fact be generated with a discrete set of points and then connected.)
+
+\vfill
+
+For this scenario we will assume a zero-mean GP, with covariance equal to the correlation function using $\rho_{i,j} = \exp \left(- d \right)$
+
+
+\vfill
+
+```{r}
+set.seed(02252025)
+dist_mat <- as.matrix(dist(x, diag = T, upper = T))
+Sigma <- exp(-dist_mat)
+
+y <- rmnorm(n =1, mean = 0 , varcov = Sigma)
+
+tibble(y = y, x = x) |>
+  ggplot(aes(y=y, x=x)) + 
+  theme_bw() +
+  geom_line() + 
+  geom_hline(yintercept = 0, color = 'grey40') +
+  ggtitle('Random realization of a GP') 
+```
+
+Overlay a few realizations of a Gaussian process on the same curve.
+
+
+```{r, echo = F, fig.width = 8, fig.height = 4}
+y2 <- rmnorm(1, 0, Sigma)
+y3 <- rmnorm(1, 0, Sigma)
+
+tibble(y = c(as.numeric(y), as.numeric(y2), as.numeric(y3)), 
+       x_val = rep(x,3), 
+       group = rep(c('1','2','3'), each = length(x))) %>% 
+  ggplot(aes(y=y, x=x_val, group = group, color = group, linetype = group)) +
+  geom_line() + theme_bw() + ggtitle('Multiple realizations of a GP')
+```
+
+\vfill
+
+
+
+#### Connecting a GP to conditional normal
+
+Now consider a discrete set of points, say $\underline{y_2}$, how can we estimate the response for the remainder of the values in the interval [0,10].
+
+```{r, echo = F}
+set.seed(03032025)
+x2 <- runif(50, 0, 10)
+n <- length(x2)
+x2 <- sort(x2)
+d2 <- as.matrix(dist(x2, diag = T, upper = T))
+Sigma22 <- exp(-d2) 
+y2 <- rmnorm(1, rep(0,n),Sigma22)
+data_fig <- tibble(y = y2, x = x2) %>% 
+  ggplot(aes(y=y, x=x)) +
+  #geom_line() + 
+  theme_bw() + ggtitle('Observed Data') +
+  geom_point(size = .5)
+data_fig
+```
+
+\newpage
+
+We can connect the dots (with uncertainty) using:
+
+$$\underline{y_1}|\underline{y_2} \sim N \left( X_1\beta + \Sigma_{12} \Sigma_{22}^{-1}\left(\underline{y_2} - X_2\beta \right), \Sigma_{11} - \Sigma_{12} \Sigma_{22}^{-1} \Sigma_{21} \right)$$
+\vfill
+
+__Create a figure that shows the data points, conditional mean and uncertainty__
+
+```{r}
+x1 <- seq(0.01, 10, .01)
+n <- length(x1)
+d1 <- as.matrix(dist(x1, diag = T, upper = T))
+Sigma11 <- exp(-d1) 
+d12 <- sqrt(plgp::distance(x1,x2))
+Sigma12 <- exp(-d12) 
+mu_1given2 <- Sigma12 %*% solve(Sigma22) %*% matrix(y2, nrow = length(y2), ncol = 1)
+eps <- .Machine$double.eps
+
+Sigma_1given2 <- Sigma11 - Sigma12 %*% solve(Sigma22) %*% t(Sigma12) +  diag(eps, n)
+
+```
+
+\vfill
+
+```{r, echo = F}
+mean_line <- tibble(y_mean = mu_1given2, x1 = x1)
+data_and_mean <- data_fig + 
+  geom_line(aes(y = y_mean, x = x1), inherit.aes = F, data = mean_line, color = 'gray') + 
+  geom_point() + ggtitle("Observed Data + Conditional Mean")
+data_and_mean
+```
+
+\vfill
+
+```{r}
+uncertainty_line <- tibble(y_mean = mu_1given2, 
+                    x1 = x1, 
+                    sd = sqrt(diag(Sigma_1given2) ),
+                    upper = y_mean + 1.96 * sd,
+                    lower = y_mean -1.96 * sd)
+data_fig + 
+  geom_line(aes(y = y_mean, x = x1), inherit.aes = F, data = mean_line, color = 'gray') + 
+  geom_line(aes(y = upper, x = x1), inherit.aes = F, data = uncertainty_line, color = 'red', lty = 2) +
+  geom_line(aes(y = lower, x = x1), inherit.aes = F, data = uncertainty_line, color = 'red', lty = 2) +
+  geom_point() +   ggtitle('Observed Data + Conditional Mean + Uncertainty Intervals')
+
+num_sims <- 100
+y1_sims <- rmnorm(num_sims, mu_1given2, Sigma_1given2)
+
+long_sims <- y1_sims %>% melt() %>% bind_cols(tibble(x = rep(x1, each = num_sims)))
+
+data_and_mean + 
+  geom_line(aes(y = value, x = x, group = Var1), inherit.aes = F,
+            data = long_sims, alpha = .1, color = 'gray') +
+  ggtitle('Observed Data + 100 GP Realizations') + 
+  geom_line(aes(y = upper, x = x1), inherit.aes = F, data = uncertainty_line, color = 'red', lty = 2) +
+  geom_line(aes(y = lower, x = x1), inherit.aes = F, data = uncertainty_line, color = 'red', lty = 2) +
+  geom_line(aes(y = y_mean, x = x1), inherit.aes = F, data = mean_line, color = 'black') +
+  geom_point(data = tibble(y = y2, x = x2))
+
+```
+
+### GP Regression
+
+Now rather than specifying a zero-mean GP, let the mean be $X \underline{\beta}.$
+
+\vfill
+
+```{r}
+x <- seq(0, 10, by = .25)
+beta <- 1
+n <- length(x)
+d <- sqrt(plgp::distance(x))
+H <- exp(-d)
+y <- rmnorm(1, x * beta ,H)
+```
+
+```{r, echo = F, fig.width = 8, fig.height = 4}
+tibble(y = y, x = x) %>% ggplot(aes(y=y, x=x)) +
+ theme_bw() + ggtitle('Random realization of a GP Regression') +
+  geom_point(size = .5) + geom_smooth(formula = 'y~x', method = 'lm')
+```
+
+---
+#### Correlation function: more details
+
+Recall the variant of the exponential covariance function that we have previously seen. Where $d$ as the Euclidean distance between $x_1$ and $x_2$, such that $d = \sqrt{(x_i - x_j)^2}$
+
+$$\rho_{i,j} = \exp \left(- d \right)$$
+
+\vfill
+
+Lets view the exponential correlation as a function of distance between the two points.
+
+```{r, echo = F}
+dist <- seq(0, 10, by = .1)
+
+sigsq <- 1
+phi <- .05
+
+tibble(rho = sigsq * exp(-dist / phi), dist = dist) %>%
+  ggplot(aes(y = rho, x = dist)) + geom_line() +
+  theme_bw() + ylab(expression(rho)) +
+  ylim(0,1)
+
+```
+
+\vfill
+
+
+Now let's consider a more general framework for covariance where 
+
+$$\sigma_{i,j} = \sigma^2 \exp \left(- d_{ij} /\phi \right)$$
+
+Now we have introduced two new parameters into this function. What do you suppose that they do?
+
+- $\sigma^2$: controls the magnitude of the covariance.
+
+\vfill
+
+- $\phi$: controls the range of the spatial correlation
+
+\vfill
+
+Modify your previous code do adjust $\phi$ and $\sigma^2$ and explore how they differ.\vfill
+
+```{r}
+phi <- 1
+sigmasq <- 1
+x <- seq(0, 10, by = .1)
+n <- length(x)
+d <- sqrt(plgp::distance(x))
+eps <- sqrt(.Machine$double.eps) 
+H <- exp(-d/phi) + diag(eps, n) 
+H[1:3,1:3]
+y <- rmnorm(1, rep(0,n),sigmasq * H)
+tibble(y = y, x = x) %>% ggplot(aes(y=y, x=x)) +
+  geom_line() + theme_bw() + ggtitle('Random realization of a GP with phi = 1 and sigmasq = 1') +
+  geom_point(size = .5)
+```
+
+
+```{r}
+phi <- .1
+sigmasq <- 5
+H <- exp(-d/phi) + diag(eps, n) 
+H[1:3,1:3]
+y <- rmnorm(1, rep(0,n),sigmasq * H)
+tibble(y = y, x = x) %>% ggplot(aes(y=y, x=x)) +
+  geom_line() + theme_bw() + ggtitle('Random realization of a GP with phi = .1 and sigmasq = 5') +
+  geom_point(size = .5)
+```
+
+\newpage
+
+We will soon talk about a more broad set of correlation functions and another parameter that provides flexibility so that predictions do not have to directly through observed points.
+
+\vfill
+
+### Geostatistical Data
+At last, we will look at simulated 2-d "spatial" data.
+
+
+##### 1. Create Sampling Locations
+
+```{r}
+set.seed(03062025)
+
+num.locations <- 50
+coords <- data.frame(x = runif(num.locations), y = runif(num.locations))
+coords %>% ggplot(aes(x=x,y=y)) + geom_point() + 
+  ggtitle('Hypothetical Sampling Locations') + xlim(0,1) + 
+  ylim(0,1) + theme_bw()
+```
+
+##### 2. Calculate Distances
+
+```{r, echo = T}
+dist.mat <- sqrt(plgp::distance(coords))
+```
+
+##### 3. Define Covariance Function and Set Parameters
+
+Use exponential covariance with no nugget: 
+
+```{r}
+sigma.sq <- 1
+phi <- .1
+Sigma <- sigma.sq * exp(- dist.mat/phi) + diag(eps, num.locations) 
+```
+
+
+##### 4. Sample realization of the process
+- This requires a distributional assumption, we will use the Gaussian distribution
+
+```{r}
+Y <- rmnorm(n=1, mean = 0, varcov = Sigma)
+```
+
+- What about the rest of the locations on the map?
+
+##### 5. Vizualize Spatial Process
+
+Start with a coarse grid and them move to a finer grid
+
+```{r}
+coords %>% mutate(Y = Y) %>% ggplot(aes(x=x,y=y)) + geom_point(aes(color=Y), size=2) + 
+  ggtitle(label = 'Simulated Spatial Process', 
+          subtitle = 'Exponential Covariance: sigma.sq = 1, phi = .1') +  
+  xlim(0,1) + ylim(0,1) +   scale_colour_gradient2() + theme_dark()
+```
+
+\newpage
+
+Now we can look at more sampling locations
+
+```{r, echo = F}
+dim.grid <- 10
+grid.coords <- data.frame(x.grid = rep(seq(.05, .95, length.out=dim.grid), dim.grid),
+  y.grid = rep(seq(.05, .95, length.out = dim.grid), each = dim.grid))
+
+dist.grid <- sqrt(plgp::distance(grid.coords))
+
+sigma.sq <- 1
+phi <- .1
+Sigma <- sigma.sq * exp(- dist.grid/phi) + diag(eps, dim.grid ^ 2) 
+
+Y <- rmnorm(n=1, mean = 0, varcov = Sigma)
+
+grid.coords %>% mutate(Y = Y) %>% ggplot(aes(x=x.grid,y=y.grid)) + geom_point(aes(color=Y), size=3) + ggtitle('Simulated Spatial Process', subtitle = 'Exponential Covariance: sigma.sq = 1, phi = .1') + xlim(0,1) + ylim(0,1) +   scale_colour_gradient2() + theme_dark()
+
+```
+
+
+```{r, echo = F}
+dim.grid <- 50
+grid.coords <- data.frame(x.grid = rep(seq(.05, .95, length.out=dim.grid), dim.grid),
+  y.grid = rep(seq(.05, .95, length.out = dim.grid), each = dim.grid))
+
+dist.grid <- sqrt(plgp::distance(grid.coords))
+
+sigma.sq <- 1
+phi <- .1
+Sigma <- sigma.sq * exp(- dist.grid/phi) + diag(eps, dim.grid ^ 2) 
+
+Y <- rmnorm(n=1, mean = 0, varcov = Sigma  )
+
+grid.coords %>% mutate(Y = Y) %>% ggplot(aes(x=x.grid,y=y.grid)) + geom_point(aes(color=Y), size=3) + ggtitle('Simulated Spatial Process', subtitle = 'Exponential Covariance: sigma.sq = 1, phi = .1') + xlim(0,1) + ylim(0,1) +   scale_colour_gradient2() + theme_dark()
+```
+
+
+
+
+How does the spatial process change with:
+
+- another draw with same parameters?
+- a different value of $\phi$
+- a different value of $\sigma^2$
+
