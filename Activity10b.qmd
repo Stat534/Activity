@@ -1,0 +1,213 @@
+---
+title: "Week 10b"
+format: pdf
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(sp)
+library(knitr)
+library(gstat)
+```
+
+### Last Time
+
+- Fitting GP models
+- Kriging with plug-in estimates
+
+### This week
+
+- Stationarity
+- Locations close are more similar, but how? -> Variograms
+
+---
+
+## Stationarity
+
+
+Assume the spatial process, $\boldsymbol{Y}(\boldsymbol{s})$ has a mean, ${\mu}(\boldsymbol{s})$, and that the variance of $\boldsymbol{Y}(\boldsymbol{s})$ exists everywhere.
+
+The process is __strictly stationary__ if: for any $n \geq 1$, any set of $n$ sites $\{\boldsymbol{s}_1, \dots, \boldsymbol{s}_n\}$ and any $\boldsymbol{h} \in \mathcal{R}^r$ (typically r =2), the distribution of $(\boldsymbol{Y}(\boldsymbol{s}_1). \dots, \boldsymbol{Y}(\boldsymbol{s}_n))$ is the same as $(\boldsymbol{Y}(\boldsymbol{s_1+h}) \dots, \boldsymbol{Y}(\boldsymbol{s_n + h})$
+
+
+Weak stationarity, or second-order stationarity of a spatial process, requires a constant mean and covariance that is a function of $\boldsymbol{h}$, $Cov(\boldsymbol{Y}(\boldsymbol{s}),\boldsymbol{Y}(\boldsymbol{s +h})) = C(\boldsymbol{h}),$ where $C(\boldsymbol{h})$ is a covariance function that only requires the separation vector $\boldsymbol{h}.$
+
+Typically with spatial models, the process is assumed to be mean zero as covariates explain the mean structure. So second-order stationarity is primarily focused on the covariance structure.
+
+
+A third kind of stationarity, known as intrinsic stationarity,  assumes $E[\boldsymbol{Y}(\boldsymbol{s + h}) -\boldsymbol{Y}(\boldsymbol{s}) ] =0$ then define
+$$E[\boldsymbol{Y}(\boldsymbol{s + h}) - \boldsymbol{Y}(\boldsymbol{s})]^2 = Var(\boldsymbol{Y}(\boldsymbol{s + h}) - \boldsymbol{Y}(\boldsymbol{s})) = 2 \gamma(\boldsymbol{h}),$$
+which only works, and satisfies intrinsic stationarity, if the equation only depends on $\boldsymbol{h}$.
+
+## Variograms
+
+
+Variograms, defined as $2\gamma( \boldsymbol{h})$ are often used to visualize spatial patterns:
+
+\vfill
+- If the distance between points is small, the variogram is expected 
+    
+\vfill
+- As the distance between points increases, 
+
+\vfill
+
+There is a mathematical link between the covariance function $C(\boldsymbol{h})$ and the variogram $2\gamma(\boldsymbol{h})$.
+
+
+## Linear semivariogram
+$$\gamma(d)=
+\begin{cases}
+\tau^2 + \sigma^2d \; \; \text{if } d > 0\\
+0 \; \; \text{otherwise}
+\end{cases}$$
+
+```{r}
+tau.sq <- 1
+sigma.sq <- 1
+d <- seq(0,3, by =.01)
+lin.gam <- tau.sq + sigma.sq * d
+lin.var <- data.frame(d=d, lin.gam = lin.gam )
+ggplot(data = lin.var, aes(x=d, y=lin.gam)) + 
+  geom_line() + ylim(0,4) + ylab('linear variogram') + theme_bw()
+```
+
+
+
+### Nugget, sill, partial-sill, and range
+Nugget is defined as $\gamma(d): \; d \rightarrow 0_+$
+
+\vfill
+
+Sill is defined as $\gamma(d): \; d \rightarrow \infty$
+
+\vfill
+
+Partial sill is defined as the $\text{sill} - \text{nugget}$
+
+\vfill
+
+Range is defined as the first point where $\gamma(d)$ reaches the sill. Range is sometimes (1/$\phi$) and sometimes $\phi$ depending on the paremeterization.
+
+
+## Spherical semivariogram: 
+$$\gamma(d)=
+\begin{cases}
+\tau^2 + \sigma^2 \; \; \text{if } d \geq 1/ \phi\\
+\tau^2 + \sigma^2\left[\frac{3\phi d}{2} - \frac{1}{2} (\phi d)^3 \right]\\
+0 \; \; \text{otherwise}
+\end{cases}$$
+
+- Sketch, or generate in R, a spherical semivariogram
+
+- On this figure label the nugget, sill, partial sill, and range.
+
+
+## Exponential 
+
+We saw the exponential covariance earlier in class, what is the mathematical form of the covariance?
+
+\vfill
+
+
+\vfill
+
+The variogram is 
+$$\gamma(d)=
+\begin{cases}
+\tau^2 + \sigma^2(1 - \exp(- d / \phi)) \; \; \text{if } d > 0\\
+0 \; \; \text{otherwise} 
+\end{cases}$$
+
+
+```{r}
+#| echo: false
+range <- 2
+phi <- 1/range
+exp.gam <- tau.sq + sigma.sq * (1 - exp( - phi * d))
+exp.var <- data.frame(d=d, exp.gam = exp.gam )
+ ggplot(data = exp.var, aes(x=d, y=exp.gam)) + geom_line() + ylim(0,4) + 
+   ylab('exponential variogram') + 
+   annotate('text', x=0.1, y = 0.9, label = 'nugget') + 
+ #  annotate('text', x=2.9, y = 2.65, label = 'sill?') + 
+  # annotate('text', x=2.2, y = .1, label = 'range?', color = 'blue') +  
+   annotate("segment", x = 2, xend = 2, y = 0, yend = 4,
+   colour = "blue", linetype =3, size = .5) + theme_bw()
+```
+
+
+
+\vfill
+
+The *effective range* is defined as the distance where there is *effectively* no spatial structure. Generally this is determined when the correlation is .05. 
+
+\vfill
+
+\begin{eqnarray*}
+\exp(-d_o / \phi) &=&.05 \\
+d_0 / \phi &=& - \log(.05) \\
+d_0 &\approx& 3 \phi
+\end{eqnarray*}
+
+
+\vfill
+
+## More Semivariograms: Equations
+Gaussian: 
+$$\gamma(d)=
+\begin{cases}
+\tau^2 + \sigma^2(1 - \exp(-\phi^2 d^2)) \; \; \text{if } d > 0\\
+0 \; \; \text{otherwise} 
+\end{cases}$$
+
+\vfill
+
+Powered Exponential:
+$$\gamma(d)=
+\begin{cases}
+\tau^2 + \sigma^2(1 - \exp(-|\phi d|^p)) \; \; \text{if } d > 0\\
+0 \; \; \text{otherwise} 
+\end{cases}$$
+
+\vfill
+
+Mat$\acute{\text{e}}$rn:
+$$\gamma(d)=
+\begin{cases}
+\tau^2 + \sigma^2\left[1 - \frac{(2\sqrt{\nu}d \phi)^\nu}{2^{\nu-1}\Gamma(\nu)} K_\nu (2 \sqrt{\nu} d \phi)\right] \; \; \text{if } d > 0\\
+0 \; \; \text{otherwise} 
+\end{cases},$$
+where $K_\nu$ is a modified Bessel function and $\Gamma()$ is a Gamma function.
+
+\vfill
+
+
+
+### Variogram Creation: How?
+
+```{r, echo=T,}
+data(meuse)
+meuse.small <- meuse %>% select(x, y, copper) %>% as_tibble()
+meuse.small %>% head(15) %>% kable()
+
+meuse |>
+  ggplot(aes(x = x , y=y, size = copper, color = copper)) +
+  geom_point() +
+  scale_color_viridis_b() +
+  theme_minimal()
+
+```
+
+### Variogram Creation: Steps
+
+1. Calculate distances between sampling locations
+2. Choose grid for distance calculations
+3. Calculate empirical semivariogram
+$$\hat{\gamma}(d_k) = \frac{1}{2N(d_k)} \sum_{\boldsymbol{s}_i,\boldsymbol{s}_i, \in N(d_k)}\left[ \boldsymbol{Y}(\boldsymbol{s}_i) - \boldsymbol{Y}(\boldsymbol{s}_j)  \right]^2,$$
+where $$N(d_k) = \{(\boldsymbol{s}_i,\boldsymbol{s}_j): ||\boldsymbol{s}_i -\boldsymbol{s}_j|| \in I_k\}$$ and $I_k$ is the $k^{th}$ interval.
+4. Plot the semivariogram
+
