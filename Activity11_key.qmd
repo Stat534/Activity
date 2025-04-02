@@ -1,0 +1,473 @@
+---
+title: "Week 11: Activity Key"
+format: gfm
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+
+### Last Week's Recap
+
+- fitting GP models
+- Spatial predictions
+- Variograms
+
+
+### This week
+
+- Spatial EDA
+- GP models to spatial data
+- Spatial Prediction / Model Choice
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+library(gstat)
+library(sp)
+library(datasets)
+library(SemiPar)
+library(ggmap)
+library(leaflet)
+library(rstan)
+options(mc.cores = parallel::detectCores())
+```
+
+# Exploratory Data Analysis
+
+## EDA Overview
+- Exploratory Data Analysis (EDA) is commonly used to explore and visualize data sets.
+- EDA is not a formal analysis, but can inform modeling decisions.
+- What are we interested in learning about with spatial data?
+
+## Data Decomposition: Time Series
+- In time series analysis, the first step in the EDA process was to decompose the observed data into a trend, seasonal cycles, and a random component.
+
+```{r}
+plot(decompose(AirPassengers))
+```
+
+
+## Data Decomposition: Spatial Data
+- Similarly spatial data will be decomposed into the mean surface and the error surface.
+
+- For example, elevation and distance from major bodies of water would be part of the mean surface for temperature.
+
+- The mean surface is focused on the global, or first-order, behavior.
+
+- The error surface captures local fluctuations, or second-order, behavior.
+
+- Spatial structure in the response surface and spatial structure in the error surface are not one-and-the-same.
+
+- Data sets contain two general types of useful information: spatial coordinates and covariates.
+
+- Regression models will be used to build the mean surface.
+
+## Spatial EDA Overview
+
+1. Map of locations
+2. Histogram or other distributional figures
+3. 3D scatterplot
+4. General Regression EDA
+5. Variograms and variogram clouds
+6. Anistopic diagnostics
+
+Then model fitting & diagnostics follow...
+
+
+# Scallops Data Example
+
+Consider the `scallop` dataset collected in 1990 of the coast of Long Island.
+
+## 1. Map of Locations
+```{r, message = F}
+data(scallop)
+scallop <- scallop %>% mutate(log.catch = log(tot.catch + 1))
+
+
+# leaflet() %>%
+#   # add different provider tiles
+#   addProviderTiles(
+#     "OpenStreetMap",
+#     group = "OpenStreetMap"
+#   ) %>%
+#    addMarkers(
+#     data = scallop,
+#     # create custom labels
+#     label = paste(scallop$tot.catch))
+
+
+scallop |> 
+  ggplot() + 
+  geom_point(aes(x = longitude, y = latitude, color= tot.catch), size = 2) +
+  scale_color_viridis_b() + 
+  theme_bw()
+
+scallop |> 
+  ggplot() + 
+  geom_point(aes(x = longitude, y = latitude, color= log.catch), size = 2) +
+  scale_color_viridis_b() + 
+  theme_bw()
+
+
+```
+
+## 1. Map of Locations - Takeaways
+
+_Goal_: Understand the sampling approach
+
+- Is this a grid?
+- Are there directions that have larger distances?
+- How large is the spatial extent?
+
+\newpage
+
+## 2. Histogram
+```{r}
+scallop %>% 
+  ggplot(aes(x=tot.catch)) +
+  geom_histogram(bins=70) + 
+  ggtitle('histogram of scallop catch') + 
+  xlab('Number of Scallops') + theme_bw()
+```
+
+```{r}
+scallop %>% 
+  ggplot(aes(x=log.catch)) + 
+  geom_histogram(bins=70) + 
+  ggtitle('histogram of log scallop catch (+1)') + 
+  xlab('Number of Scallops') + theme_bw()
+```
+
+## 2. Histogram - Takeaways
+
+_Goal:_ Identify a sampling distribution for the data
+
+- Continuous or discrete data
+- A linear model approach will be used for the response
+- Spatial structure can also be included in generalized linear models
+- Outliers are worth investigating, but a data point that does not fit the assumed model should not automatically be eliminated
+
+\newpage
+
+## 3. 3D scatterplot
+```{r}
+scallop %>% 
+  ggplot(aes(x=longitude, y = latitude)) + 
+  geom_point(aes(color=tot.catch)) + 
+  scale_color_viridis_b() + 
+  theme_bw()
+```
+
+```{r}
+scallop %>% 
+  ggplot(aes(x=longitude, y = latitude)) + 
+  geom_point(aes(color=log.catch)) + 
+  scale_color_viridis_b() + theme_bw()
+```
+
+## 3. 3D scatterplot - Takeaways
+
+_Goal:_ Examine the spatial pattern of the response
+
+- Again, this is the response not the residual
+- Can also think about a contour plot (using some interpolation method)
+
+
+## 4. General Regression EDA
+
+- Assessing relationship between variable of interest and covariate information
+- No covariates are present in the scallops data
+- In some cases latitude and longitude can be used as covariates
+
+
+## 5. Variograms and variogram clouds
+## 5. Variograms 
+```{r,  eval = T}
+scallop.sp <- scallop
+coordinates(scallop.sp) = ~longitude+latitude
+proj4string(scallop.sp) <- CRS("+proj=longlat +datum=WGS84")  ## for example
+scallop.utm <- spTransform(scallop.sp, CRS("+proj=utm +zone=18 ellps=WGS84"))
+
+plot(variogram(log.catch~1, scallop.sp))
+```
+
+
+## 5. Variograms: Takeaways
+
+_Goal:_ Visually diagnose spatial structure
+
+
+## 6. Anisotropy
+
+_Goal:_ Determine if direction influences spatial structure
+
+
+## Directional Variogram
+- All of the variograms we have looked at are isotropic
+
+```{r}
+plot(variogram(log.catch~1, scallop.sp, alpha = c(0, 45, 90, 135)))
+```
+
+---
+
+## Model fitting
+
+There are several paradigms for model selection. Here we will motivate using a test & training set to compare predictions from a spatial and non-spatial model.
+
+On the test set, compare root mean squared error (RMSE) $\sqrt{\sum_i(y_i - y_{i,pred})^2 / n}$ and mean absolute deviation (MAD) $\sum_i|y_i - y_{i,pred}| / n$
+
+#### 1. Create a test and training set from the scallop dataset. Then create a visual to show the test / training datasets.
+
+I'd recommend using ~100 to fit your model (training set) and ~50 for prediction (test set).
+
+
+```{r, message = F}
+set.seed(03312025)
+scallop <- scallop %>% 
+  mutate(log.catch = log(tot.catch + 1), 
+                              id = 1:n())
+
+data_fig <- scallop %>% 
+  ggplot(aes(x=longitude, y = latitude, color = log.catch)) + 
+  geom_point() +  theme_bw() + 
+  scale_color_gradientn(colours = colorspace::diverge_hcl(7))
+
+data_fig
+
+scallop_train <- scallop %>% sample_n(100)
+scallop_test <- scallop %>% filter(!id %in% scallop_train$id)
+```
+
+
+```{r}
+data_fig +       
+  geom_point(aes(y = latitude, x = longitude), inherit.aes = F, data = scallop_test, color = "black", size = 3) + 
+  geom_point(aes(y = latitude, x = longitude), color = "white", inherit.aes = F, data = scallop_test, size = 2) + 
+  geom_point() +
+  labs(caption = 'We will make predictions at the circles (hold out data)')
+```
+
+2. Write code to estimate a non-spatial model using just the mean structure. Then construct a figure that includes mean predictions for each site in the test dataset.
+
+__Write out the model that corresponds to the stan code below.__
+
+*This is a boring model where $\text{log_scallops} = \mu + \epsilon,$ where $\epsilon \sim N(0, \tau^2)$*
+
+```{r}
+x <- cbind(scallop_train$latitude,scallop_train$longitude)
+d <- sqrt(plgp::distance(x))
+num_preds <- nrow(scallop_test)
+x_preds <- cbind(scallop_test$latitude,scallop_test$longitude)
+d_preds <- sqrt(plgp::distance(x_preds))
+d_12 <- sqrt(plgp::distance(x, x_preds))
+```
+
+```
+data {
+  int<lower=0> N; // number of observed data points 
+  vector[N] y; // observed response
+  int<lower=0> N_preds; // number of predictive points
+}
+
+parameters {
+  real<lower = 0> tausq;
+  real mu;
+}
+
+transformed parameters{
+  vector[N] mu_vec;
+  vector[N] tausq_vec;
+  for(i in 1:N) mu_vec[i] = mu;
+  for(i in 1:N) tausq_vec[i] = tausq;
+}
+
+model {
+  y ~ multi_normal(mu_vec ,diag_matrix(tausq_vec));
+  mu ~ normal(0, 10);
+  
+}
+
+generated quantities {
+  vector[N_preds] y_preds;
+  vector[N_preds] mu_preds;
+  vector[N_preds] tausq_preds;
+
+  for(i in 1:N_preds) mu_preds[i] = mu;
+  for(i in 1:N_preds) tausq_preds[i] = tausq;
+
+  y_preds = multi_normal_rng(mu_preds, diag_matrix(tausq_preds));
+}
+
+```
+
+
+
+```{r, results = 'hide'}
+mean_surface <- stan("mean_regression.stan", 
+                  data=list(N = nrow(scallop_train), 
+                            y = scallop_train$log.catch,
+                            N_preds = num_preds),
+                  iter = 5000)
+```
+
+```{r}
+print(mean_surface, pars = c('mu', 'tausq', 'y_preds[1]','y_preds[2]','y_preds[3]'))
+
+mean_preds <- colMeans(extract(mean_surface)['y_preds']$y_preds)
+
+pred_df <- scallop_test %>% bind_cols(tibble(preds = mean_preds))
+
+data_fig + 
+  geom_point(aes(y = latitude, x = longitude), color = "black", inherit.aes = F, data = pred_df, size = 3) + 
+  geom_point(aes(y = latitude, x = longitude), color = "white", inherit.aes = F, data = pred_df, size = 2) +
+geom_point(aes(y = latitude, x = longitude, color = preds), data = pred_df, size = 1, inherit.aes = F) 
+```
+
+3. Now fit a model with spatial structure and construct a figure that includes mean predictions for each site in the test dataset.
+
+```
+data {
+  int<lower=0> N; // number of observed data points 
+  vector[N] y; // observed response
+  matrix[N,N] dist; // observed distance matrix
+  real phi_lower; // lower point for phi (range)
+  real phi_upper; // upper point for phi (range)
+  int<lower=0> N_preds; // number of predictive points
+  matrix[N_preds,N_preds] dist_preds; // distance matrix for predictive points
+  matrix[N, N_preds] dist_12; //distance between observed and predicted
+  real phi_a;
+  real phi_b;
+  real sigmasq_a;
+  real sigmasq_b;
+  real tausq_a;
+  real tausq_b;
+}
+
+parameters {
+  real<lower = phi_lower, upper = phi_upper> phi;
+  real<lower = 0> sigmasq;
+  real<lower = 0> tausq;
+  real mu;
+}
+
+transformed parameters{
+  vector[N] mu_vec;
+  vector[N] tausq_vec;
+  corr_matrix[N] Sigma;
+  
+  for(i in 1:N) mu_vec[i] = mu;
+  for(i in 1:(N-1)){
+   for(j in (i+1):N){
+     Sigma[i,j] = exp((-1)*dist[i,j]/ phi);
+     Sigma[j,i] = Sigma[i,j];
+   }
+ }
+ for(i in 1:N) Sigma[i,i] = 1;
+ for(i in 1:N) tausq_vec[i] = tausq;
+}
+
+model {
+  matrix[N, N] L;
+  L = cholesky_decompose(sigmasq * Sigma + diag_matrix(tausq_vec));
+
+  y ~ multi_normal_cholesky(mu_vec, L);
+  phi ~ inv_gamma(phi_a, phi_b);
+  sigmasq ~ inv_gamma(sigmasq_a, sigmasq_b);
+  tausq ~ inv_gamma(tausq_a, tausq_b);
+  mu ~ normal(0, 10);
+}
+
+generated quantities {
+  vector[N_preds] y_preds;
+  vector[N] y_diff;
+  vector[N_preds] mu_preds;
+  corr_matrix[N_preds] Sigma_preds;
+  vector[N_preds] tausq_preds;
+  matrix[N, N_preds] Sigma_12;
+
+  for(i in 1:N_preds) tausq_preds[i] = tausq;
+  for(i in 1:N_preds) mu_preds[i] = mu;
+  for(i in 1:N) y_diff[i] = y[i] - mu;
+  
+
+  for(i in 1:(N_preds-1)){
+   for(j in (i+1):N_preds){
+     Sigma_preds[i,j] = exp((-1)*dist_preds[i,j]/ phi);
+     Sigma_preds[j,i] = Sigma_preds[i,j];
+   }
+ }
+ for(i in 1:N_preds) Sigma_preds[i,i] = 1;
+ 
+   for(i in 1:(N)){
+   for(j in (1):N_preds){
+     Sigma_12[i,j] = exp((-1)*dist_12[i,j]/ phi);
+   }
+ }
+
+y_preds = multi_normal_rng(mu_preds + (sigmasq * Sigma_12)' * inverse(sigmasq * Sigma) * (y_diff), sigmasq * Sigma_preds + diag_matrix(tausq_preds) - (sigmasq * Sigma_12)' * inverse(sigmasq * Sigma + diag_matrix(tausq_vec)) * (sigmasq * Sigma_12) );
+}
+```
+
+__What is the statistical model implied by this stan code?__
+
+*Now $\text{log_scallops} = \mu + \epsilon,$ where $\epsilon \sim N(0, \sigma^2 H(\phi|d) + \tau^2 I)$* and $H(\phi|d)_{ij} = \exp(d_{ij}/\phi)$
+
+__Discuss the parameter fits from this code.__
+
+```{r, results = 'hide'}
+spatial_surface <- stan("spatial_regression_chol.stan", 
+                  data=list(N = nrow(scallop_train), 
+                            y = scallop_train$log.catch,
+                            dist = d,
+                            phi_lower= .05,
+                            phi_upper = 2.5,
+                            N_preds = num_preds,
+                            dist_preds = d_preds,
+                            dist_12 = d_12,
+                            phi_a = 1,
+                            phi_b = 1,
+                            sigmasq_a = 3,
+                            sigmasq_b = 3,
+                            tausq_a = 3,
+                            tausq_b = 3),
+                 chains = 2)
+```
+
+*The magnitude of $\sigma$ (the partial sill) is substantially bigger than $\tau$ (the nugget), suggesting that spatial covariance in the data is fairly strong. The range parameter, $\phi$ is fairly small on the scale of the data. These parameters seem fairly reasonable based on the data.*
+
+
+```{r}
+print(spatial_surface, pars = c('mu', 'sigmasq','tausq', 'phi', 'y_preds[1]','y_preds[2]','y_preds[3]'))
+
+
+spatial_preds <- colMeans(extract(spatial_surface)['y_preds']$y_preds)
+
+pred_df_spatial <-  pred_df %>% bind_cols(tibble(spatial_preds = spatial_preds))
+
+data_fig + 
+  geom_point(aes(y = latitude, x = longitude), color = "black", inherit.aes = F, data = pred_df, size = 3) + 
+  geom_point(aes(y = latitude, x = longitude), color = "white", inherit.aes = F, data = pred_df_spatial, size = 2) +
+geom_point(aes(y = latitude, x = longitude, color = spatial_preds), data = pred_df_spatial, size = 1, inherit.aes = F) 
+```
+
+
+4. Compare the predictive ability of the spatial and non-spatial model using RMSE and MAD
+
+```{r}
+pred_df_spatial %>% 
+  mutate(diff_mean = tot.catch - exp(preds),
+                           diff_spatial = tot.catch - exp(spatial_preds)) %>%
+  summarise(rmse_mean = sqrt(mean(diff_mean^2) ),
+            rmse_spatial = sqrt(mean(diff_spatial^2)),
+            mad_mean = mean(abs(diff_mean)),
+            mad_spatial = mean(abs(diff_spatial)))
+```
+
+As we'd expect, the spatial model makes better predictions by both RMSE and MAD.
