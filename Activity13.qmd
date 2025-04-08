@@ -1,0 +1,203 @@
+---
+title: "Week 13: Activity"
+format: pdf
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+
+### Last Week
+
+- Spatial EDA
+- GP models to spatial data
+- Spatial Prediction / Model Choice
+- Anisotropic Spatial Models
+
+### This Week
+
+- GLM models
+- Spatial GLMs
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+library(ggmap)
+library(knitr)
+library(gtools)
+library(mgcv)
+library(mnormt)
+library(arm)
+library(rstanarm)
+library(rstan)
+```
+
+## Generalized Linear Model Notation
+There are three components to a generalized linear model:
+
+1. Sampling Distribution: such as Poisson or Binomial
+\vfill
+
+2. Linear combination of predictors: $\eta = X\beta$
+\vfill
+
+3. A link function to map the linear combination of predictors to the support of the sampling distribution.
+
+\vfill
+
+## Binary Regression Overview
+Write out the complete model specification for binary regression.
+\vfill
+
+
+
+\newpage
+Latent interpretation of probit model:
+
+Let $z_i > 0$ if $y_i = 1$. Otherwise, let $z_i <0$. Then $z_i \sim N(X \beta, 1)$ is a latent continuous variable that is mapped to zero or 1.
+
+\vfill
+
+For a set of predictors, $X^{'}$, then $z^{'} \sim N(X^{'} \beta, 1)$ and the probability of a 1 or zero can be obtained by integrating the latent distribution.
+
+\vfill
+
+
+Consider air quality data from Colorado as a motivating example.
+
+```{r, echo = T, echo = F}
+CO <- read_csv("https://raw.githubusercontent.com/stat456/Activities/refs/heads/main/CO_air.csv")
+
+state <- map_data("state")
+
+colorado <- subset(state, region=="colorado")
+
+co_map <- ggplot(data=colorado, mapping=aes(x=long, y=lat, group=group)) + 
+  coord_fixed(1.3) + 
+  geom_polygon(color="black", fill="white") + 
+  geom_polygon(data=colorado, fill=NA, color="white") + 
+  geom_polygon(color="black", fill=NA) + theme_bw()
+
+
+  
+#co_map + geom_point(aes(x = Longitude, y = Latitude, color= Exceedance_Count), data = CO, inherit.aes = F) + ggtitle("Ozone Measurements")
+
+co_map + geom_point(aes(x = Longitude, y = Latitude, color= Exceedance), data = CO, inherit.aes = F) + ggtitle("Ozone Measurements")
+```
+
+\newpage
+
+
+Interpret the output.
+
+```{r, echo = T}
+CO <- CO %>% mutate(north = as.numeric(Latitude > 38 ))
+glm(Exceedance~north, family=binomial(link = 'probit'),data=CO) %>% display()
+```
+
+\vfill
+
+```{r, echo = T}
+glm(Exceedance~north, family=binomial(link = 'logit'),data=CO) %>% display()
+```
+
+
+\vfill
+
+## Spatial Binary Regression
+Assume $Y(\boldsymbol{s_i})$ is the binary response for $\boldsymbol{s_i}$,
+\begin{eqnarray*}
+Y(\boldsymbol{s_i})|\beta, w(\boldsymbol{s_i}) &\sim& Bernoulli(\pi(\boldsymbol{s_i}))\\
+\Phi^{-1}(\pi(\boldsymbol{s_i})) &=& X(\boldsymbol{s_i}) \beta + w(\boldsymbol{s_i}), \\
+\end{eqnarray*}
+where $\boldsymbol{W} \sim N(\boldsymbol{0},\sigma^2 H(\phi))$
+
+\vfill
+
+
+\newpage
+
+## Simulating spatial random effects for binary data
+
+
+```{r, eval = T, echo = T}
+N.sim <- 100
+Lat.sim <- runif(N.sim,37,40)
+Long.sim <- runif(N.sim,-109,-104)
+phi.sim <- 1
+sigmasq.sim <- 1
+beta.sim <- c(-1,1)
+north.sim <-  as.numeric(Lat.sim > 38)
+
+
+d <- dist(cbind(Lat.sim,Long.sim), upper = T, diag = T) %>% as.matrix
+H.sim <- sigmasq.sim * exp(- d / phi.sim)
+w.sim <- rmnorm(1,0,H.sim)
+xb.sim <- beta.sim[1] + beta.sim[2] * north.sim
+y.sim <- rbinom(N.sim,1,pnorm(xb.sim + w.sim))
+```
+
+\newpage
+
+```{r}
+tibble(y = Lat.sim, x = Long.sim, response = factor(y.sim)) %>%
+  ggplot(aes(y=y, x=x, color = response)) + geom_point() +
+  theme_bw() + ggtitle('Binary Response') + scale_color_manual(values=c("#023FA5", "#8E063B"))
+
+tibble(y = Lat.sim, x = Long.sim, `random \neffect` = w.sim) %>%
+  ggplot(aes(y=y, x=x, color = `random \neffect`)) + geom_point() +
+  theme_bw() + ggtitle('Spatial Random Effect') + 
+  scale_color_gradientn(colours = colorspace::diverge_hcl(7))
+```
+
+\newpage
+
+#### STAN: probit regression
+
+```{r}
+writeLines(readLines('probit_regression.stan'))
+```
+
+
+# Binary Regression
+
+
+
+\newpage
+
+# Spatial Poisson Regression
+
+## Motivation
+
+```{r}
+
+co_map + geom_point(aes(x = Longitude, y = Latitude, color= Exceedance_Count), data = CO, inherit.aes = F) + ggtitle("Ozone Measurements")
+
+```
+
+
+## Poisson Regression Overview
+Write out the complete model specification for Poisson regression.
+
+\vfill
+
+Assume $Y_i$ is the count response for the $i^{th}$ observation,
+
+
+\vfill
+
+Next write out a Poisson regression model with spatial random effects
+
+
+\newpage
+
+
+## 1. Simulate and visualize spatial random effects for binary data: No Covariates
+
+
+## 2. Fit a model for this setting
+
