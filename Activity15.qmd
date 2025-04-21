@@ -1,0 +1,254 @@
+---
+title: "Week 15: Activity"
+format: gfm
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+### This Week
+
+- Intro to Areal Data
+- Areal Data Visualization
+- Assessing Spatial Structure in Areal Data
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+library(ggmap)
+library(knitr)
+library(gtools)
+library(mgcv)
+library(mnormt)
+library(arm)
+library(rstanarm)
+library(rstan)
+library(viridis)
+library(spdep)
+```
+
+
+
+```{r, out.width = "90%", echo = F, fig.align = 'center', fig.cap='source: https://www.politico.com/election-results/2018/montana/'}
+knitr::include_graphics("MT_Map.png") 
+```
+
+Do you think this figure shows spatial structure?
+
+
+If so, how can spatial information be incorporated with this data type?
+
+
+## Areal Data Intro
+
+Defining features: random observation measured at well defined subsets, such as a city or state. Data, typically averages or totals, are captured for geographic units or blocks
+
+\vfill
+One way to characterize the transition from geostatistical, or point-referenced, data to areal data is that of going from a continuous spatial process to a discrete spatial process.
+
+\vfill
+Another way to characterize the transition from point pattern data to areal data is thinking of areal data as taking the count of point pattern observations in each areal unit.
+
+\vfill
+
+Spatial correlation is incorporated with 
+
+\vfill
+
+Autoregressive models on
+
+\vfill
+
+Model based approaches will incorporate covariates and introduce spatial structure with random effects.
+
+\vfill
+
+#### Areal Data Inferential Questions
+
+Is there a spatial pattern?
+
+\vfill
+
+In presenting a map of expected responses, should the raw values or a smoothed response be presented?
+
+\vfill
+
+What values would be expected for new set of areal units?
+
+
+
+
+
+## Areal Data Visualization
+
+#### Choropleth Tutorial
+```{r}
+#| echo: true
+#devtools::install_github("UrbanInstitute/urbnmapr")
+
+library(urbnmapr)
+
+```
+
+
+What are the objects `urbnmapr::states` and `urbnmapr::counties`?
+\vfill
+
+
+```{r}
+urbnmapr::states
+```
+
+\vfill
+
+```{r}
+urbnmapr::counties
+```
+\vfill
+
+
+```{r}
+ggplot() +
+  geom_polygon(data = urbnmapr::states,
+               mapping = aes(x = long, y = lat, group = group), fill = "white", color = "grey") +
+  coord_map(projection = "mercator") +
+  theme_minimal()
+```
+
+```{r}
+ggplot() +
+  geom_polygon(data = urbnmapr::counties,
+               mapping = aes(x = long, y = lat, group = group), fill = "white", color = "grey") +
+  coord_map(projection = "mercator") +
+  theme_minimal()
+```
+
+
+What is `urbnmapr::countydata`? Create a choropleth using this dataset to visualize median household income both nationally and in Montana.
+
+\vfill
+```{r}
+
+urbnmapr::countydata
+```
+\vfill
+
+
+\vfill
+
+
+## Assessing Spatial Structure in Areal Data
+
+#### Proximity Matrix
+Similar to the distance matrix with point-reference data, a proximity matrix $W$ is used to model areal data.
+
+\vfill
+
+Given measurements $Y_i, \dots, Y_n$ associated with areal units $1, \dots, n$, the elements of $W$, $w_{ij}$ connect units $i$ and $j$
+
+\vfill
+
+Common values for $w_{ij}$ are
+$w_{ij} = 1$ if i and j are adjacent and $w_{ij}=0$ otherwise
+
+\vfill
+
+#### Grid Example
+
+```{r, echo = F}
+d=data.frame(xmin=c(0.5,0.5,0.5,-.5,-.5,-.5,-1.5,-1.5,-1.5),
+             xmax=c(1.5,1.5,1.5,.5,.5,.5,-.5,-.5,-.5),
+             ymin=rep(c(.5,-.5,-1.5), 3),
+             ymax=rep(c(1.5,.5,-.5), 3),
+             id=c(1,2,3,4,5,6,7,8,9))
+ggplot() +
+  scale_x_continuous(name="") +
+  scale_y_continuous(name="") +
+  geom_rect(data=d, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), color="black", alpha=0.05) +
+  geom_text(data=d, aes(x=xmin+(xmax-xmin)/2, y=ymin+(ymax-ymin)/2, label=id), size=4) +
+  theme_minimal() +
+  theme(axis.text=element_blank(),
+        axis.ticks = element_blank())
+
+```
+
+Create an adjacency matrix with diagonal neighbors
+
+\vfill
+
+Create an adjacency matrix without diagonal neighbors
+
+## Spatial Association
+
+There are two common statistics used for assessing spatial association:
+Moran's I and Geary's C.
+
+\vfill
+
+Moran's I
+$I =n \sum_i \sum_j w_{ij} (Y_i - \bar{Y})(Y_j -\bar{Y}) / (\sum_{i\neq j \;w_{ij}})\sum_i(Y_i - \bar{Y})^2$
+
+\vfill
+
+Moran's I is analogous to correlation, where values close to 1 exhibit spatial clustering and values near -1 show spatial regularity (checkerboard effect).
+
+\vfill
+
+Geary's C
+$C=(n-1)\sum_i \sum_j w_{ij}(Y_i-Y_j)^2 / 2(\sum_{i \neq j \; w_{ij}})\sum_i (Y_i - \bar{Y})^2$
+
+\vfill
+
+Geary's C is more similar to a variogram (has a connection to Durbin-Watson in 1-D). The statistics ranges from 0 to 2; values close to 2 exhibit regularity and values close to 1 show clustering.
+
+\vfill
+
+## Spatial Association Exercise
+
+Consider the following scenarios and use the following 4-by-4 grid
+
+```{r, echo = F}
+d4 <- tibble(xmin = rep(c(3.5, 2.5, 1.5, 0.5), each = 4),
+             x = rep(4:1, each =4),      
+             xmax = rep(c(3.5, 2.5, 1.5, 0.5), each = 4) +1,
+             ymin = rep(c(3.5, 2.5, 1.5, 0.5), 4), 
+             y = rep(4:1, 4),
+             ymax = rep(c(3.5, 2.5, 1.5, 0.5), 4) +1,
+             rpos = rep(4:1, 4),
+             cpos = rep(1:4, each = 4),
+             id=16:1)
+ggplot() + 
+  scale_x_continuous(name="column") + 
+  scale_y_continuous(name="row",breaks = 1:4,labels = c('4','3','2', '1') ) +
+  geom_rect(data=d4, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), color="black", alpha=0.05) +
+  geom_text(data=d4, aes(x=xmin+(xmax-xmin)/2, y=ymin+(ymax-ymin)/2, label=id), size=4) +
+  theme_minimal()
+```
+
+and proximity matrix 
+
+```{r}
+W <- matrix(0, 16, 16)
+for (i in 1:16){
+  W[i,] <- as.numeric((d4$rpos[i] == d4$rpos & (abs(d4$cpos[i] - d4$cpos) == 1)) | 
+                        (d4$cpos[i] == d4$cpos & (abs(d4$rpos[i] - d4$rpos) == 1)))
+}
+head(W)
+```
+\vfill
+
+for each scenario plot the grid, calculate I and G, along with permutation-based p-values. Note you can use `moran.test()` and `geary.test()` from `spdep`
+
+\newpage
+
+1. Simulate data where the responses are i.i.d. N(0,1). 
+
+
+2. Simulate data and calculate I and G for a 4-by-4 grid with a chess board approach, where "black squares" $\sim N(-2,1)$ and "white squares" $\sim N(2,1)$.
+
+3. Simulate multivariate normal response on a 4-by-4 grid where $y \sim N(0, (I- \rho W)^{-1})$, where $\rho = .3$ is a correlation parameter and $W$ is a proximity matrix.
+
