@@ -1,0 +1,256 @@
+---
+title: "Week 16b: Activity Key"
+format: pdf
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+### Last Time
+
+- Areal Data Visualization
+- Assessing Spatial Structure in Areal Data
+- Overview of Areal Data Models
+
+### This Time
+
+- Model fitting with Areal Data
+- Simulating the spatially correlated areal data
+- Modeling continuous spatially correlated areal data
+
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+library(maps)
+library(sf)
+library(usmap)
+library(arm)
+library(CARBayes)
+library(spdep)
+library(CARBayesdata)
+library(sf)
+library(raster)
+
+data(respiratorydata)
+data(GGHB.IZ)
+
+respiratory_admissions <- GGHB.IZ |> 
+  right_join(respiratorydata, by = join_by(IZ))
+
+W_mat <- nb2mat(poly2nb(respiratory_admissions), style = 'B')
+
+```
+
+
+### Recall: Disease Mapping
+
+Areal data with counts is often associated with disease mapping, where there are two quantities for each areal unit:
+$Y_i =$  observed number of cases of disease in county i and $E_i =$ expected number of cases of disease in county i. Generically, this can be modeled as $Y_i | \psi_i \sim Poisson(E_i \psi_i)$.
+
+
+We will use `S.glm`, `S.CARbym`, and `S.CARleroux` from the `CARBayes` package to fit and compare models using deviance information criteria.
+
+```{r}
+formula <- observed ~ offset(log(expected))
+no_spatial <- S.glm(formula=formula, data=respiratory_admissions,
+                             family="poisson", burnin=10000, n.sample=30000,thin=2, verbose = F)
+
+print(no_spatial)
+
+exp(-.1643)
+mean(respiratory_admissions$SMR)
+```
+
+One way to incorporate spatial structure is with the  Besag-York-Mollie (BYM) model, written as
+
+\begin{eqnarray*}
+Y_i | \psi_i &\sim& Poisson(E_i \psi_i)\\
+log(\psi_i) &=& \boldsymbol{x_i^T}\boldsymbol{\beta} + \theta_i + \phi_i
+\end{eqnarray*}
+
+where we place a CAR prior on $\phi$ and standard random effects on $\theta$. 
+
+
+\begin{eqnarray*}
+\phi_k | \phi_{-k}, W, \tau &\sim& N( \frac{\sum_{i=1}^k w_{ki} \phi_i}{\sum_{i=1}^k w_{ki}}, \frac{\tau^2}{\sum_{i=1}^k w_{ki}})\\
+\theta_k &\sim& N(0, \sigma^2)
+\end{eqnarray*}
+
+```{r}
+
+bym <- S.CARbym(formula=formula, data=respiratory_admissions,
+                             family="poisson", W=W_mat, burnin=10000,
+                n.sample=30000, thin=2, verbose = F)
+print(bym)
+```
+
+
+
+Alternatively we can specify the following model known as the Leroux model which uses the IAR framework with the $\rho$ term where
+
+\begin{eqnarray*}
+Y_i | \psi_i &\sim& Poisson(E_i \psi_i)\\
+log(\psi_i) &=& \boldsymbol{x_i^T}\boldsymbol{\beta} + \phi_i \\
+\phi_k | \phi_{-k}, W, \tau &\sim& N( \frac{ \rho \sum_{i=1}^k w_{ki} \phi_i}{\rho \sum_{i=1}^k w_{ki} + 1 - \rho}, \frac{\tau^2}{\rho \sum_{i=1}^k w_{ki} + 1 - \rho})
+\end{eqnarray*}
+
+
+```{r}
+leroux <- S.CARleroux(formula=formula, data=respiratory_admissions,
+                             family="poisson", W=W_mat, burnin=10000,
+                n.sample=30000, thin=2, verbose = F)
+print(leroux)
+```
+
+Note that the above models result in a single smooth, spatial random surface (defined by the neighborhood structure). The differences in the BYM and the Leroux approaches are fairly minimal.
+
+However, models can also be formulated to incorporate local spatial structure.
+
+One option is the Lee and Mitchell approach, which models the $w_{kj}$ terms rather than setting all to be zero or one. Specifically, an additional variable (Z) is constructed to model dissimilarity between neighboring units. In this case, our z values correspond to the percentage of people defined to be income deprived. Using this value we construct a distance (or dissimilarity) metric between areal units.
+
+Fit this model using `S.CARdissimilarity` and compare to the previous models.
+
+```{r}
+
+income <- respiratory_admissions$incomedep
+Z.incomedep <- as.matrix(dist(income, diag=TRUE, upper=TRUE))
+
+dis <- S.CARdissimilarity(formula=formula, data=respiratory_admissions,
+                             family="poisson", W=W_mat, Z=list(Z.incomedep=Z.incomedep), verbose = F,
+                             W.binary=TRUE, burnin=10000, n.sample=30000, thin=2)
+
+print(dis)
+```
+
+
+We can also extract the boundaries, where a stepchange (no neighbor structure) is identified.
+
+```{r}
+border.locations <- dis$localised.structure$W.posterior
+respiratory_admissions$risk <- dis$fitted.values /
+  respiratory_admissions$expected
+boundary.final <- highlight.borders(border.locations=border.locations,
+                                sfdata=respiratory_admissions)
+st_crs(boundary.final) <- raster::crs(respiratory_admissions)
+
+respiratory_admissions |>
+  ggplot() +
+  geom_sf(aes(fill = risk)) +
+  geom_sf(data = boundary.final, color = 'red') +
+  scale_fill_viridis_b() +
+  ggtitle('Respiratory Hospital Admissions')
+
+```
+
+
+## Models for continuous data
+
+Now consider a continuous response on areal data. We will use a dataset called `pricedata` on the same areal locations as our previous analysis.
+
+ 
+```{r}
+library(CARBayesdata)
+data(pricedata)
+head(pricedata)
+pricedata <- pricedata |>
+  mutate(log_price = log(price))
+```
+
+Here is a data dictionary for this dataset:
+ 
+- __IZ:__ The unique identifier for each IZ.
+
+- __price:__ Median property price.
+
+- __log_price:__ We've created the logarithm of price, which can be useful for modeling given the skewed structure of price.
+
+- __crime:__ The crime rate (number of crimes per 10,000 people).
+
+- __rooms:__ The median number of rooms in a property.
+
+- __sales:__ The percentage of properties that sold in a year.
+
+- __driveshop:__ The average time taken to drive to a shopping centre in minutes.
+
+- __type:__ The predominant property type with levels: detached, flat, semi, terrace. 
+
+Note that the data curators deleted one observation due to an aberrant value.
+
+---
+
+Explore mean structure in `log_price` as a function of other variables with data visualization.
+
+```{r}
+library(GGally)
+ggpairs(data = pricedata, columns = c(8, 3:7))
+
+pricedata |>
+  ggplot(aes(y = log_price, x = crime)) +
+  geom_point() +
+  geom_smooth()
+
+pricedata |>
+  ggplot(aes(y = log_price, x = sales)) +
+  geom_point() +
+  geom_smooth()
+
+pricedata |>
+  ggplot(aes(y = log_price, x = driveshop)) +
+  geom_point() +
+  geom_smooth()
+```
+
+---
+
+Visualize log price and assess spatial structure
+
+```{r}
+comb_price <- GGHB.IZ |> 
+  right_join(pricedata, by = join_by(IZ))
+
+comb_price |>
+  ggplot() + geom_sf(aes(fill = log_price)) +
+  scale_fill_viridis_b()
+
+W_list <- nb2listw(poly2nb(comb_price), style = 'B')
+W_mat <- nb2mat(poly2nb(comb_price), style = 'B')
+
+moran.test(comb_price$price, W_list, alternative = 'two.sided')
+geary.test(comb_price$log_price, W_list, alternative = 'two.sided')
+
+pull_resids <- lm(log_price~poly(crime,2) + rooms + poly(sales,2) + factor(type) + driveshop, data = comb_price)
+
+moran.mc(residuals(pull_resids), W_list, 1000)
+geary.mc(residuals(pull_resids), W_list, 1000)
+
+```
+
+---
+
+Implement a statistical model for log price that includes spatial correlation
+
+```{r}
+lm1 <- S.CARleroux(log_price~ crime + rooms + sales + factor(type) + driveshop, data=comb_price, family="gaussian", W=W_mat,
+ burnin=10000, n.sample=30000, thin=10, n.chains=1, verbose = F)
+
+print(lm1)
+
+lm2 <- S.CARleroux(log_price~poly(crime,2) + rooms + poly(sales,2) + factor(type) + driveshop, data=comb_price, family="gaussian", W=W_mat,
+ burnin=10000, n.sample=30000, thin=10, n.chains=1, verbose = F)
+
+print(lm2)
+
+lm3 <- S.CARleroux(log_price~poly(crime,2) + rooms + sales + factor(type) + driveshop, data=comb_price, family="gaussian", W=W_mat,
+ burnin=10000, n.sample=30000, thin=10, n.chains=1, verbose = F)
+
+print(lm3)
+
+lm4 <- S.CARleroux(log_price~crime + rooms + poly(sales,2) + factor(type) + driveshop, data=comb_price, family="gaussian", W=W_mat,
+ burnin=10000, n.sample=30000, thin=10, n.chains=1, verbose = F)
+
+print(lm4)
+
+```
+

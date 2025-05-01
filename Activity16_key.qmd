@@ -1,0 +1,370 @@
+---
+title: "Week 16: Activity Key"
+format: pdf
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+### Last Time
+
+- Intro to Areal Data
+- Areal Data Visualization
+- Assessing Spatial Structure in Areal Data
+- Spatial Smoothing with Areal Data
+
+### This Time
+
+- Overview of Areal Data Models
+- Simulating the fitting areal data
+
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+library(maps)
+library(sf)
+library(usmap)
+library(arm)
+library(CARBayes)
+library(spdep)
+library(CARBayesdata)
+library(sf)
+library(raster)
+```
+
+
+### Areal Data Models: Disease Mapping
+
+Areal data with counts is often associated with disease mapping, where there are two quantities for each areal unit:
+$Y_i =$  observed number of cases of disease in county i and $E_i =$ expected number of cases of disease in county i.
+
+Note this can also be used to model generic count data on area units.
+
+
+\vfill
+One way to think about the expected counts is
+$$E_i = n_i \bar{r} = n_i \left(\sum_j y_j / \sum_j n_j  \right),$$
+where $\bar{r}$ is the overall disease rate and $n_i$ is the population for region $i$.
+
+\vfill
+However note that $\bar{r},$  and hence, $E_i$ is a not fixed, but is a function of the data. This is called *internal standardization*.
+
+\vfill
+
+An alternative is to use some standard rate for a given age group, such that $E_i = \sum_j n_{ij} r_j.$ This is *external standardization.*
+
+\vfill
+
+
+Often counts are assumed to follow the Poisson model where
+$$Y_i|\eta_i \sim Poisson(E_i \eta_i),$$
+where $\eta_i$ is the relative risk of the disease in region $i$.  This quantity is known as the *standardized morbidity ratio* (SMR).
+
+\vfill
+
+Then the MLE of $\eta_i$ is $Y_i /E_i$.
+
+Consider a dataset with hospital admissions for respiratory disease in Glasgow. Plot both raw counts of hospital admissions and the SMR, which controlls for population.this areal data. Note that you can use leaflet or ggplot for this exercise.
+
+```{r}
+data(respiratorydata)
+data(GGHB.IZ)
+
+respiratory_admissions <- GGHB.IZ |> 
+  right_join(respiratorydata, by = join_by(IZ))
+
+GGHB.IZ |> 
+  right_join(respiratorydata, by = join_by(IZ)) |>
+  ggplot() + 
+  geom_sf(aes(fill = observed)) +
+  scale_fill_viridis_b() +
+  ggtitle('Respiratory Hospital Admissions')
+
+GGHB.IZ |> 
+  right_join(respiratorydata, by = join_by(IZ)) |>
+  ggplot() + 
+  geom_sf(aes(fill = SMR)) +
+  scale_fill_viridis_b() +
+  ggtitle('SMR for Respiratory Hospital Admissions')
+```
+
+Assess whether either the observed hospital counts or the standardized SMR show evidence of spatial structure.
+
+
+```{r}
+W_list <- nb2listw(poly2nb(respiratory_admissions), style = 'B')
+W_mat <- nb2mat(poly2nb(respiratory_admissions), style = 'B')
+
+moran.test(respiratory_admissions$observed, W_list, alternative = 'two.sided')
+geary.test(respiratory_admissions$SMR, W_list, alternative = 'two.sided')
+```
+
+### Areal models with spatial structure
+
+#### Poisson-lognormal models
+The model can be written as
+\begin{eqnarray*}
+Y_i | \psi_i &\sim& Poisson(E_i \psi_i)\\
+log(\psi_i) &=& \boldsymbol{x_i^T}\boldsymbol{\beta} + \theta_i + \phi_i
+\end{eqnarray*}
+
+where $\boldsymbol{x_i}$ are spatial covariates, $\theta_i$ corresponds to region wide heterogeneity (random effects), and $\phi_i$ captures local clustering (spatial structure).
+
+
+### Brook's Lemma and Markov Random Fields
+
+To consider areal data from a model-based perspective, it is necessary to obtain the joint distribution of the responses
+$$p(y_1, \dots, y_n).$$
+
+\vfill
+
+From the joint distribution, the *full conditional distribution*
+$$p(y_i|y_j, j \neq i),$$
+is uniquely determined.
+
+\vfill
+
+Brook's Lemma states that the joint distribution can be obtained from the full conditional distributions.
+
+\vfill
+
+When the areal data set is large, working with the full conditional distributions can be preferred to the full joint distribution.
+
+\vfill
+More specifically, the response $Y_i$ should only directly depend on the neighbors, hence,
+$$p(y_i|y_j, j \neq i) = p(y_i|y_j, j \in \delta_i)$$
+where $\delta_i$ denotes the neighborhood around $i$.
+
+The idea of using the local specification for determining the global form of the distribution is Markov random field.
+
+\vfill
+
+An essential element of a MRF is a *clique*, which is a group of units where each unit is a neighbor of all units in the clique
+
+\vfill
+
+A *potential function* is a function that is exchangeable in the arguments. With continuous data a common potential is $(Y_i - Y_j)^2$ if $i \sim j$ ($i$ is a neighbor of $j$).
+
+\vfill
+
+
+A joint distribution $p(y_1, \dots, y_n)$ is a Gibbs distribution if it is a function of $Y_i$ only through the potential on cliques.
+
+\vfill
+
+
+
+
+\vfill
+
+
+## Conditional Autoregressive Models
+## Gaussian Model
+
+Suppose the full conditionals are specifed as
+$$Y_i|y_j, j\neq i \sim N \left(\sum_j b_{ij} y_j, \tau_i^2 \right)$$
+
+\vfill
+
+Then using Brooks' Lemma, the joint distribution is
+$$p(y_1, \dots, y_n) \propto \exp \left(-\frac{1}{2}\boldsymbol{y}^T D^{-1} (I - B) \boldsymbol{y} \right),$$
+where $B$ is a matrix with entries $b_{ij}$ and D is a diagonal matrix with diagonal elements $D_{ii} = \tau_i^2$.
+
+\vfillx
+
+The previous equation suggests a multivariate normal distribution, but $D^{-1}(I - B)$ should be symmetric.
+
+\vfill
+
+Symmetry requires $$\frac{b_{ij}}{\tau^2_i}=\frac{b_{ji}}{\tau^2_j}, \; \; \forall \; \; i , j$$
+
+\vfill
+
+In general, $B$ is not symmetric, but setting $b_{ij} = w_{ij}/ w_{i+}$ and $\tau_i^2 = \tau^2 / w_{i+}$ satisfies the symmetry assumptions (given that we assume W is symmetric)
+
+\vfill
+
+\newpage
+
+Now the full conditional distribution can be written as
+$$Y_i|y_j, j\neq i \sim N \left(\sum_j w_{ij} y_j / w_{i+}, \tau^2 / w_{i+} \right)$$
+
+\vfill
+
+Similarly the joint distribution is now
+$$p(y_1, \dots, y_n) \propto \exp \left(-\frac{1}{2 \tau^2}\boldsymbol{y}^T  (D_w - W) \boldsymbol{y} \right)$$
+where $D_w$ is a diagonal matrix with diagonal entries $(D_w)_{ii} = w_{i+}$
+
+\vfill
+
+The joint distribution can also be re-written as
+$$p(y_1, \dots, y_n) \propto \exp \left(-\frac{1}{2 \tau^2} \sum_{i \neq j} w_{ij} (y_i - y_j)^2\right)$$
+
+\vfill
+
+However, both these formulations results in an improper distribution. This could be solved with a constraint, such as $Y_i = 0$.
+
+\vfill
+
+The result is the joint distribution is improper, despite proper full conditional distributions. This model specification is often referred to as an *intrinsically autoregressive* model (IAR).
+
+\vfill
+
+\newpage
+
+## IAR
+
+The IAR cannot be used to model data directly, rather this is used a prior specification and attached to random effects specified at the second stage of the hierarchical model.
+
+\vfill
+
+The impropriety can be remedied by defining a parameter $\rho$ such that $(D_w - W)$ becomes $(D_w - \rho W)$ such that this matrix is nonsingular.
+
+\vfill
+
+The parameter $\rho$ can be considered an extra parameter in the CAR model.
+
+\vfill
+
+With or without $\rho,$ $p(\boldsymbol{y})$ (or the Bayesian posterior when the CAR specification is placed on the spatial random effects) is proper.
+
+\vfill
+
+When using $\rho$, the full conditional becomes $$Y_i|y_j, j\neq i \sim N \left(\rho \sum_j w_{ij} y_j / w_{i+}, \tau^2 / w_{i+} \right)$$
+
+\vfill
+
+Returning to the previously specified model
+
+\begin{eqnarray*}
+Y_i | \psi_i &\sim& Poisson(E_i \psi_i)\\
+log(\psi_i) &=& \boldsymbol{x_i^T}\boldsymbol{\beta} + \theta_i + \phi_i
+\end{eqnarray*}
+
+when we place a CAR prior on $\phi$ and standard random effects on $\theta$, this model is known as the Besag-York-Mollie (BYM) model. 
+
+specifically,
+
+\begin{eqnarray*}
+\phi_k | \phi_{-k}, W, \tau &\sim& N( \frac{\sum_{i=1}^k w_{ki} \phi_i}{\sum_{i=1}^k w_{ki}}, \frac{\tau^2}{\sum_{i=1}^k w_{ki}})\\
+\theta_k &\sim& N(0, \sigma^2)
+\end{eqnarray*}
+
+Alternatively we can specify the following model known as the Leroux model which uses the IAR framework where 
+
+\begin{eqnarray*}
+Y_i | \psi_i &\sim& Poisson(E_i \psi_i)\\
+log(\psi_i) &=& \boldsymbol{x_i^T}\boldsymbol{\beta} + \phi_i \\
+\phi_k | \phi_{-k}, W, \tau &\sim& N( \frac{ \rho \sum_{i=1}^k w_{ki} \phi_i}{\rho \sum_{i=1}^k w_{ki} + 1 - \rho}, \frac{\tau^2}{\rho \sum_{i=1}^k w_{ki} + 1 - \rho})
+\end{eqnarray*}
+
+using `S.glm`, `S.CARbym`, and `S.CARleroux` from the `CARBayes` package, fit these spatial models and compare with information criteria.
+
+```{r}
+formula <- observed ~ offset(log(expected))
+no_spatial <- S.glm(formula=formula, data=respiratory_admissions, 
+                             family="poisson", burnin=10000, n.sample=30000,thin=2, verbose = F)
+
+print(no_spatial)
+ 
+bym <- S.CARbym(formula=formula, data=respiratory_admissions, 
+                             family="poisson", W=W_mat, burnin=10000,
+                n.sample=30000, thin=2, verbose = F)
+print(bym)
+
+leroux <- S.CARleroux(formula=formula, data=respiratory_admissions, 
+                             family="poisson", W=W_mat, burnin=10000,
+                n.sample=30000, thin=2, verbose = F)
+print(leroux)
+```
+
+Note that the above models result in a single smooth, spatial random surface (defined by the neighborhood structure). However, models can also be formulated to incorporate local spatial structure.
+
+One option is the Lee and Mitchell approach, which models the $w_{kj}$ terms rather than setting all to be zero or one. Fit this model using `S.CARdissimilarity` and compare to the previous models.
+
+```{r}
+
+income <- respiratory_admissions$incomedep
+Z.incomedep <- as.matrix(dist(income, diag=TRUE, upper=TRUE))
+
+chain1 <- S.CARdissimilarity(formula=formula, data=respiratory_admissions, 
+                             family="poisson", W=W_mat, Z=list(Z.incomedep=Z.incomedep), verbose = F,
+                             W.binary=TRUE, burnin=10000, n.sample=30000, thin=2)
+
+
+border.locations <- chain1$localised.structure$W.posterior
+respiratory_admissions$risk <- chain1$fitted.values / 
+  respiratory_admissions$expected
+boundary.final <- highlight.borders(border.locations=border.locations, 
+                                sfdata=respiratory_admissions)
+st_crs(boundary.final) <- raster::crs(respiratory_admissions)
+
+respiratory_admissions |>
+  ggplot() + 
+  geom_sf(aes(fill = observed)) +
+  geom_sf(data = boundary.final, color = 'red') +
+  scale_fill_viridis_b() +
+  ggtitle('Respiratory Hospital Admissions')
+
+```
+
+<!-- Continuing with the Tester election dataset. -->
+
+<!-- ```{r, echo = F} -->
+<!-- Tester <- read_csv('Tester_Results.csv') -->
+<!-- Tester <- Tester %>%  -->
+<!--   mutate(Tester_Prop = TESTER / (TESTER + ROSENDALE + BRECKENRIDGE), -->
+<!--          county_fips = as.character(FIPS)) -->
+
+<!-- MT.counties <- map('county', 'montana', fill = T, plot = F) -->
+<!-- #map('county', 'montana') -->
+<!-- county.ID <- sapply(strsplit(MT.counties$names, ','),  -->
+<!--                     function(x) x[2]) -->
+<!-- mt.poly <- map2SpatialPolygons(MT.counties, IDs = county.ID) -->
+
+<!-- #drop Yellowstone National Park -->
+<!-- mt.poly.noYNP <- mt.poly[1:56,] -->
+<!-- mt.nb.noYNP <- poly2nb(mt.poly.noYNP) -->
+<!-- mt.listw <- nb2listw(mt.nb.noYNP, style = 'B') -->
+<!-- mt.adj.mat <- nb2mat(mt.nb.noYNP, style = 'B') -->
+<!-- ``` -->
+
+<!-- ## Now consider some covariates to explain the response -->
+
+<!-- Consider a linear model with county population, using both `lm` and `S.glm` -->
+
+<!-- ```{r, echo = T} -->
+<!-- lm_dat <- Tester %>%  -->
+<!--   left_join(usmap::countypop %>% rename("county_fips" = fips), by = 'county_fips') %>% -->
+<!--   mutate(scale_pop = scale(pop_2015)) -->
+
+<!-- pop_model <- lm(Tester_Prop ~  scale_pop, data = lm_dat) -->
+<!-- display(pop_model) -->
+
+<!-- S.glm(Tester_Prop ~ scale_pop, data = lm_dat, family = 'gaussian',  -->
+<!--       burnin = 100, n.sample = 1000, verbose = F) -->
+<!-- ``` -->
+
+<!-- \newpage -->
+
+<!-- We previously extract the residuals create a choropleth and test for spatial association. Now we will directly run the CAR model using `CARBayes`. See [vignette](https://cran.r-project.org/web/packages/CARBayes/vignettes/CARBayes.pdf) for more info and options on model fitting, including GLM models. -->
+
+<!-- This model can be expressed as -->
+
+<!-- $Y_k \sim N(\mu_k, \nu^2),$ where $\mu_k = x_k \beta + \psi_k$. -->
+
+<!-- A CAR prior is placed on $\psi_k$ such that the full conditional is expressed as -->
+
+<!-- $$\psi_k|- \sim N \left( \frac{\rho \sum_i w_{ki}\psi_i}{\rho \sum_i w_{ki} + 1 - \rho}, \frac{\tau^2}{\rho \sum_i w_{ki} + 1 - \rho}\right)$$ -->
+
+<!-- If $\rho = 0$ there is no spatial structure present, if $\rho \rightarrow 1$ this is the intrinsic CAR model. -->
+
+
+
+<!-- ```{r} -->
+
+<!-- S.CARleroux(Tester_Prop ~ scale_pop, data = lm_dat, family = 'gaussian', burnin = 10000,  -->
+<!--             n.sample = 100000, W = mt.adj.mat, thin = 5, verbose = F) -->
+<!-- ``` -->
